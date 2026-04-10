@@ -2,7 +2,10 @@ import sqlite3
 import os
 from datetime import datetime
 
-DB_PATH = os.path.join(os.path.dirname(__file__), "bot_database.db")
+# Определяем директорию для БД
+DB_DIR = os.path.join(os.path.dirname(__file__), "data")
+os.makedirs(DB_DIR, exist_ok=True)
+DB_PATH = os.path.join(DB_DIR, "bot_database.db")
 
 
 def init_database():

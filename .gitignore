@@ -23,6 +23,7 @@ ENV/
 
 # Database
 *.db
+data/
 
 # Plan
 PLAN.md
