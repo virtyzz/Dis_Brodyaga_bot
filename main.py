@@ -72,6 +72,7 @@ async def on_ready():
 
     # Запуск задачи архивирования (00:00 MSK = 21:00 UTC)
     archive_daily.start()
+    print("Задача ежедневного архивирования запущена")
 
 
 @tasks.loop(minutes=1)
