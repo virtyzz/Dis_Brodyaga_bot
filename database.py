@@ -10,7 +10,7 @@ DB_PATH = os.path.join(DB_DIR, "bot_database.db")
 
 def init_database():
     """Инициализация базы данных и создание таблиц если они не существуют"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
 
     # Таблица пользователей
@@ -59,7 +59,7 @@ def init_database():
 
 def register_user(user_id: int, username: str):
     """Регистрация нового пользователя"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
 
     cursor.execute(
@@ -79,7 +79,7 @@ def register_user(user_id: int, username: str):
 
 def is_user_registered(user_id: int) -> bool:
     """Проверка, зарегистрирован ли пользователь"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute("SELECT user_id FROM users WHERE user_id = ?", (user_id,))
     result = cursor.fetchone() is not None
@@ -91,7 +91,7 @@ def add_trader_report(
     server: str, location_name: str, x_coord: int, y_coord: int, reporter_id: int
 ):
     """Добавление или обновление отчета (1 голос = 1 пользователь на сервере)"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
 
     # Проверяем, есть ли уже запись этого пользователя на этом сервере
@@ -139,7 +139,7 @@ def add_trader_report(
 
 def get_trader_reports():
     """Получение всех текущих отчетов о торговце"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute("""
         SELECT tr.server, tr.location_name, tr.x_coord, tr.y_coord, tr.is_first_reporter, u.username
@@ -154,7 +154,7 @@ def get_trader_reports():
 
 def has_trader_report_for_server(server: str, location_name: str) -> bool:
     """Проверка, есть ли уже отчет для сервера и локации"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute(
         "SELECT COUNT(*) FROM trader_reports WHERE server = ? AND location_name = ?",
@@ -167,7 +167,7 @@ def has_trader_report_for_server(server: str, location_name: str) -> bool:
 
 def archive_reports():
     """Архивирование текущих отчетов в историю"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
 
     now = datetime.now()
@@ -186,7 +186,7 @@ def archive_reports():
 
 def get_history_by_date(date_str: str):
     """Получение истории за определенную дату (формат: YYYY-MM-DD)"""
-    conn = sqlite3.connect(DB_PATH)
+    conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute("""
         SELECT th.server, th.location_name, th.x_coord, th.y_coord, th.is_first_reporter, u.username, th.archived_at

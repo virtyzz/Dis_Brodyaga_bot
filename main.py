@@ -2,8 +2,9 @@ import discord
 from discord.ext import commands, tasks
 import os
 import re
+import time
 import pytz
-from datetime import datetime, time
+from datetime import datetime, time as dt_time
 
 from database import (
     init_database,
@@ -49,8 +50,11 @@ intents.members = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Хранилище состояний для многошагового процесса сообщения
-# user_id -> {"step": int, "server": str, "location_base": str}
+# user_id -> {"step": int, "server": str, "location_base": str, "timestamp": float}
 user_states = {}
+
+# Таймаут состояния (5 минут в секундах)
+USER_STATE_TIMEOUT = 300
 
 # Московский часовой пояс
 MSK = pytz.timezone("Europe/Moscow")
@@ -74,6 +78,10 @@ async def on_ready():
     archive_daily.start()
     print("Задача ежедневного архивирования запущена")
 
+    # Регистрация persistent views (работают после перезапуска)
+    bot.add_view(MainMenuView())
+    print("Persistent views зарегистрированы")
+
 
 @tasks.loop(minutes=1)
 async def archive_daily():
@@ -86,6 +94,18 @@ async def archive_daily():
             archive_reports()
             print("Архивирование завершено")
             archive_daily.last_run = now_utc.date()
+
+
+def clean_expired_user_states():
+    """Очистка просроченных состояний пользователей"""
+    expired = [
+        uid for uid, state in user_states.items()
+        if time.time() - state.get("timestamp", 0) > USER_STATE_TIMEOUT
+    ]
+    for uid in expired:
+        del user_states[uid]
+    if expired:
+        print(f"Очищены состояния: {len(expired)} пользователей")
 
 
 def ensure_user_registered(user: discord.User) -> bool:
@@ -129,26 +149,26 @@ async def send_main_menu(interaction: discord.Interaction):
 
 
 class MainMenuView(discord.ui.View):
-    """Главное меню с кнопками"""
+    """Главное меню с кнопками (persistent — работает после перезапуска)"""
 
     def __init__(self):
         super().__init__(timeout=None)
 
-    @discord.ui.button(label="📍 Где торговец?", style=discord.ButtonStyle.primary)
+    @discord.ui.button(label="📍 Где торговец?", style=discord.ButtonStyle.primary, custom_id="main_menu_check_trader")
     async def check_trader(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         ensure_user_registered(interaction.user)
         await show_trader_locations(interaction)
 
-    @discord.ui.button(label="📢 Сообщить о торговце", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="📢 Сообщить о торговце", style=discord.ButtonStyle.success, custom_id="main_menu_report_trader")
     async def report_trader(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         ensure_user_registered(interaction.user)
         await start_report_flow(interaction)
 
-    @discord.ui.button(label="ℹ️ Помощь", style=discord.ButtonStyle.secondary)
+    @discord.ui.button(label="ℹ️ Помощь", style=discord.ButtonStyle.secondary, custom_id="main_menu_help")
     async def help_info(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
@@ -286,8 +306,16 @@ async def show_trader_locations(interaction: discord.Interaction):
 
 async def start_report_flow(interaction: discord.Interaction):
     """Начало процесса сообщения о торговце"""
-    # Сохраняем состояние пользователя
-    user_states[interaction.user.id] = {"step": 1, "server": None, "location_base": None}
+    # Очищаем просроченные состояния
+    clean_expired_user_states()
+
+    # Сохраняем состояние пользователя с таймстампом
+    user_states[interaction.user.id] = {
+        "step": 1,
+        "server": None,
+        "location_base": None,
+        "timestamp": time.time(),
+    }
 
     # Шаг 1: Выбор сервера
     view = ServerSelectView(interaction.user.id)
@@ -319,6 +347,16 @@ class ServerSelectView(discord.ui.View):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message(
                 "Это не ваше меню!", ephemeral=True
+            )
+            return
+
+        # Проверяем таймаут
+        state = user_states.get(interaction.user.id)
+        if state and time.time() - state.get("timestamp", 0) > USER_STATE_TIMEOUT:
+            del user_states[interaction.user.id]
+            await interaction.response.send_message(
+                "⏰ Время вышло. Начните заново, нажав 📢 Сообщить о торговце.",
+                ephemeral=True,
             )
             return
 
@@ -358,6 +396,17 @@ def make_location_select_view(user_id: int, server: str, locations: list):
                     if interaction.user.id != user_id:
                         await interaction.response.send_message(
                             "Это не ваше меню!", ephemeral=True
+                        )
+                        return
+
+                    # Проверяем таймаут
+                    state = user_states.get(interaction.user.id)
+                    if state and time.time() - state.get("timestamp", 0) > USER_STATE_TIMEOUT:
+                        if interaction.user.id in user_states:
+                            del user_states[interaction.user.id]
+                        await interaction.response.send_message(
+                            "⏰ Время вышло. Начните заново, нажав 📢 Сообщить о торговце.",
+                            ephemeral=True,
                         )
                         return
 
