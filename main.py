@@ -27,15 +27,18 @@ from coords_handler import (
 
 # Загрузка токена из переменных окружения или файла .env
 TOKEN = os.getenv("DISCORD_BOT_TOKEN")
+MAP_URL = os.getenv("MAP_URL", "")
 if not TOKEN:
     # Попытка загрузить из файла .env если существует
     env_file = os.path.join(os.path.dirname(__file__), ".env")
     if os.path.exists(env_file):
         with open(env_file, "r", encoding="utf-8") as f:
             for line in f:
+                line = line.strip()
                 if line.startswith("DISCORD_BOT_TOKEN="):
-                    TOKEN = line.strip().split("=", 1)[1]
-                    break
+                    TOKEN = line.split("=", 1)[1]
+                elif line.startswith("MAP_URL="):
+                    MAP_URL = line.split("=", 1)[1]
 
 if not TOKEN:
     print("ВНИМАНИЕ: Токен бота не найден!")
@@ -256,7 +259,7 @@ async def show_trader_locations(interaction: discord.Interaction):
                     inline=False,
                 )
 
-            # Кнопки для скриншотов
+            # Кнопки для скриншотов и ссылка на карту
             view = discord.ui.View(timeout=120)
             for loc_name in locations.keys():
                 screenshot = get_screenshot_path(loc_name)
@@ -279,6 +282,14 @@ async def show_trader_locations(interaction: discord.Interaction):
 
                     btn.callback = make_callback(screenshot, loc_name)
                     view.add_item(btn)
+
+            # Кнопка-ссылка на карту
+            if MAP_URL and MAP_URL.strip():
+                view.add_item(discord.ui.Button(
+                    label="🗺️ Посмотреть на карте",
+                    style=discord.ButtonStyle.link,
+                    url=MAP_URL.strip(),
+                ))
 
             if first_server:
                 if view.children:
