@@ -123,19 +123,14 @@ def add_trader_report(
 
 
 def get_trader_reports():
-    """Получение последних отчетов (по одной локации на сервер)"""
+    """Получение всех текущих отчетов о торговце"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     cursor.execute("""
         SELECT tr.server, tr.location_name, tr.x_coord, tr.y_coord, tr.is_first_reporter, u.username
         FROM trader_reports tr
         JOIN users u ON tr.reporter_id = u.user_id
-        WHERE tr.report_date = (
-            SELECT MAX(tr2.report_date)
-            FROM trader_reports tr2
-            WHERE tr2.server = tr.server
-        )
-        ORDER BY tr.server
+        ORDER BY tr.server, tr.report_date
     """)
     reports = cursor.fetchall()
     conn.close()

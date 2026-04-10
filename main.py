@@ -164,7 +164,7 @@ class MainMenuView(discord.ui.View):
 
 
 async def show_trader_locations(interaction: discord.Interaction):
-    """Показ последнего местоположения торговца на каждом сервере"""
+    """Показ местоположения торговца с голосованием по локациям"""
     reports = get_trader_reports()
 
     if not reports:
@@ -176,27 +176,63 @@ async def show_trader_locations(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-    # Собираем данные по серверам (теперь один сервер = одна запись)
-    reports_by_server = {r[0]: r for r in reports}
+    # Группировка: {server: {location: {"x": x, "y": y, "users": [...]}}}
+    reports_grouped = {}
+    for server, location_name, x, y, is_first, username in reports:
+        if server not in reports_grouped:
+            reports_grouped[server] = {}
+        if location_name not in reports_grouped[server]:
+            reports_grouped[server][location_name] = {"x": x, "y": y, "users": []}
+        if username not in reports_grouped[server][location_name]["users"]:
+            reports_grouped[server][location_name]["users"].append(username)
 
     server_data = []
     for server in SERVERS:
-        if server in reports_by_server:
-            _, location_name, x, y, is_first, username = reports_by_server[server]
+        if server in reports_grouped:
             embed = discord.Embed(
                 title=f"📍 {server}",
                 color=discord.Color.green(),
             )
-            embed.add_field(
-                name=f"**{location_name}**",
-                value=f"📍 Координаты: X: {x}, Y: {y}\n👥 Сообщил: {username}",
-                inline=False,
-            )
-            screenshot = get_screenshot_path(location_name)
+
+            locations = reports_grouped[server]
+            # Находим локацию с максимумом голосов
+            max_votes = 0
+            winner = None
+            for loc_name, data in locations.items():
+                votes = len(data["users"])
+                if votes > max_votes:
+                    max_votes = votes
+                    winner = loc_name
+
+            # Скриншот только если лидер один и голосов > 1
             screenshot_file = None
-            if screenshot and os.path.exists(screenshot):
-                screenshot_file = discord.File(screenshot, filename=f"{server}_screenshot.png")
-                embed.set_image(url=f"attachment://{server}_screenshot.png")
+            is_clear_winner = max_votes > 1
+            if is_clear_winner:
+                # Проверяем, нет ли ещё одной локации с таким же числом голосов
+                ties = sum(1 for d in locations.values() if len(d["users"]) == max_votes)
+                if ties > 1:
+                    is_clear_winner = False
+
+            for loc_name, data in locations.items():
+                votes = len(data["users"])
+                users = data["users"]
+                users_formatted = ", ".join([f"**{users[0]}**"] + users[1:])
+                vote_label = f"({votes} {'голос' if votes == 1 else 'голоса' if votes < 5 else 'голосов'})"
+
+                # Выделяем победителя
+                prefix = "🏆 " if (is_clear_winner and loc_name == winner) else ""
+                embed.add_field(
+                    name=f"{prefix}**{loc_name}** {vote_label}",
+                    value=f"📍 Координаты: X: {data['x']}, Y: {data['y']}\n👥 Сообщили: {users_formatted}",
+                    inline=False,
+                )
+
+                # Скриншот победителя
+                if is_clear_winner and loc_name == winner:
+                    screenshot = get_screenshot_path(loc_name)
+                    if screenshot and os.path.exists(screenshot):
+                        screenshot_file = discord.File(screenshot, filename=f"{server}_screenshot.png")
+                        embed.set_image(url=f"attachment://{server}_screenshot.png")
 
             server_data.append({"embed": embed, "file": screenshot_file})
         else:
@@ -207,7 +243,7 @@ async def show_trader_locations(interaction: discord.Interaction):
             )
             server_data.append({"embed": embed, "file": None})
 
-    # Отправляем первое сообщение
+    # Отправляем
     first = server_data[0]
     if first["file"]:
         await interaction.response.send_message(
@@ -216,7 +252,6 @@ async def show_trader_locations(interaction: discord.Interaction):
     else:
         await interaction.response.send_message(embed=first["embed"], ephemeral=True)
 
-    # Отправляем остальные сервера
     for item in server_data[1:]:
         if item["file"]:
             await interaction.followup.send(
