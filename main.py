@@ -78,7 +78,7 @@ async def on_ready():
 async def archive_daily():
     """Ежедневное архивирование данных в 00:00 MSK (21:00 UTC)"""
     now_utc = datetime.utcnow()
-    # Проверяем, что сейчас 21:00 UTC и задача ещё не выполнялась сегодня
+    print(f"[Archive check] UTC time: {now_utc.strftime('%H:%M:%S')}")
     if now_utc.hour == 21 and now_utc.minute < 5:
         if not hasattr(archive_daily, "last_run") or archive_daily.last_run != now_utc.date():
             print("Выполняется ежедневное архивирование данных...")
