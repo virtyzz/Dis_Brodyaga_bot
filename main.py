@@ -70,16 +70,21 @@ async def on_ready():
     init_database()
     print("База данных инициализирована")
 
-    # Запуск задачи архивирования
+    # Запуск задачи архивирования (00:00 MSK = 21:00 UTC)
     archive_daily.start()
 
 
-@tasks.loop(time=time(hour=0, minute=0, tzinfo=MSK))
+@tasks.loop(minutes=5)
 async def archive_daily():
-    """Ежедневное архивирование данных в 00:00 MSK"""
-    print("Выполняется ежедневное архивирование данных...")
-    archive_reports()
-    print("Архивирование завершено")
+    """Ежедневное архивирование данных в 00:00 MSK (21:00 UTC)"""
+    now_utc = datetime.utcnow()
+    # Проверяем, что сейчас 21:00 UTC и задача ещё не выполнялась сегодня
+    if now_utc.hour == 21 and now_utc.minute < 5:
+        if not hasattr(archive_daily, "last_run") or archive_daily.last_run != now_utc.date():
+            print("Выполняется ежедневное архивирование данных...")
+            archive_reports()
+            print("Архивирование завершено")
+            archive_daily.last_run = now_utc.date()
 
 
 def ensure_user_registered(user: discord.User) -> bool:
