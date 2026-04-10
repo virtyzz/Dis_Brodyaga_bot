@@ -164,7 +164,7 @@ class MainMenuView(discord.ui.View):
 
 
 async def show_trader_locations(interaction: discord.Interaction):
-    """Показ местоположения торговца по всем серверам"""
+    """Показ последнего местоположения торговца на каждом сервере"""
     reports = get_trader_reports()
 
     if not reports:
@@ -176,42 +176,27 @@ async def show_trader_locations(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-    # Группировка отчетов по серверам и локациям
-    reports_grouped = {}
-    for server, location_name, x, y, is_first, username in reports:
-        if server not in reports_grouped:
-            reports_grouped[server] = {}
-        if location_name not in reports_grouped[server]:
-            reports_grouped[server][location_name] = {"x": x, "y": y, "users": []}
-        if username not in reports_grouped[server][location_name]["users"]:
-            reports_grouped[server][location_name]["users"].append(username)
+    # Собираем данные по серверам (теперь один сервер = одна запись)
+    reports_by_server = {r[0]: r for r in reports}
 
-    # Собираем данные по каждому серверу
     server_data = []
     for server in SERVERS:
-        if server in reports_grouped:
+        if server in reports_by_server:
+            _, location_name, x, y, is_first, username = reports_by_server[server]
             embed = discord.Embed(
                 title=f"📍 {server}",
                 color=discord.Color.green(),
             )
-
+            embed.add_field(
+                name=f"**{location_name}**",
+                value=f"📍 Координаты: X: {x}, Y: {y}\n👥 Сообщил: {username}",
+                inline=False,
+            )
+            screenshot = get_screenshot_path(location_name)
             screenshot_file = None
-            for location_name, data in reports_grouped[server].items():
-                users = data["users"]
-                users_formatted = ", ".join([f"**{users[0]}**"] + users[1:])
-
-                embed.add_field(
-                    name=f"**{location_name}**",
-                    value=f"📍 Координаты: X: {data['x']}, Y: {data['y']}\n👥 Сообщили: {users_formatted}",
-                    inline=False,
-                )
-
-                # Берём первый доступный скриншот
-                if screenshot_file is None:
-                    screenshot = get_screenshot_path(location_name)
-                    if screenshot and os.path.exists(screenshot):
-                        screenshot_file = discord.File(screenshot, filename=f"{server}_screenshot.png")
-                        embed.set_image(url=f"attachment://{server}_screenshot.png")
+            if screenshot and os.path.exists(screenshot):
+                screenshot_file = discord.File(screenshot, filename=f"{server}_screenshot.png")
+                embed.set_image(url=f"attachment://{server}_screenshot.png")
 
             server_data.append({"embed": embed, "file": screenshot_file})
         else:
