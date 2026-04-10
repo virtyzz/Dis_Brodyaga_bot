@@ -29,18 +29,13 @@
 
 ## 🚀 Установка и запуск
 
-### 1. Установка зависимостей
-
-```bash
-pip install -r requirements.txt
-```
-
-### 2. Настройка токена
+### 1. Настройка токена
 
 Создайте файл `.env` на основе `.env.example`:
 
 ```bash
-copy .env.example .env
+cp .env.example .env        # Linux/Mac
+copy .env.example .env      # Windows
 ```
 
 Вставьте ваш токен бота Discord в файл `.env`:
@@ -58,7 +53,7 @@ DISCORD_BOT_TOKEN=ваш_токен_здесь
    - ✅ MESSAGE CONTENT INTENT
    - ✅ SERVER MEMBERS INTENT
 
-### 3. Добавление бота на сервер
+### 2. Добавление бота на сервер
 
 1. В панели разработчика перейдите в "OAuth2" -> "URL Generator"
 2. Выберите scope: `bot`, `applications.commands`
@@ -70,9 +65,26 @@ DISCORD_BOT_TOKEN=ваш_токен_здесь
    - Read Message History
 4. Скопируйте полученную ссылку и перейдите по ней
 
-### 4. Запуск бота
+### 3. Запуск через Docker Compose (рекомендуется)
 
 ```bash
+# Сборка и запуск
+docker compose up -d
+
+# Просмотр логов
+docker compose logs -f
+
+# Остановка
+docker compose down
+
+# Перезапуск после изменений
+docker compose up -d --build
+```
+
+### Запуск без Docker
+
+```bash
+pip install -r requirements.txt
 python main.py
 ```
 
@@ -147,14 +159,25 @@ SERVERS = ["cherno-1", "cherno-2", "cherno-3", "cherno-4", "cherno-5"]
 
 ### Бот не запускается
 - Убедитесь, что токен правильный в файле `.env`
-- Проверьте, установлены ли все зависимости: `pip install -r requirements.txt`
+- Проверьте логи: `docker compose logs`
 
 ### Бот не отвечает на команды
 - Проверьте, что бот добавлен на сервер с правильными разрешениями
 - Убедитесь, что включены MESSAGE CONTENT INTENT и SERVER MEMBERS INTENT
 
 ### Ошибки с базой данных
-- Удалите файл `bot_database.db` — он создастся заново при запуске
+- Остановите бот: `docker compose down`
+- Удалите `bot_database.db` — он создастся заново при запуске
+
+## 🖥️ Развёртывание на VPS
+
+```bash
+git clone https://github.com/ТВОЙ_НИК/Dis_Brodyaga_bot.git
+cd Dis_Brodyaga_bot
+nano .env  # вставь токен
+docker compose up -d
+docker compose logs -f
+```
 
 ## 📝 Лицензия
 

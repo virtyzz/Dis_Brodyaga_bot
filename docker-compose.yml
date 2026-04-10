@@ -1,0 +1,11 @@
+version: "3.8"
+
+services:
+  brodyaga-bot:
+    build: .
+    container_name: brodyaga_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./bot_database.db:/app/bot_database.db

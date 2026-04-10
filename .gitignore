@@ -31,6 +31,9 @@ PLAN.md
 .env
 !.env.example
 
+# Docker
+.env
+
 # OS
 .DS_Store
 Thumbs.db
