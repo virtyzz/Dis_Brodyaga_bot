@@ -298,15 +298,8 @@ class ServerSelectView(discord.ui.View):
         user_states[interaction.user.id]["step"] = 2
 
         # Шаг 2: Выбор локации
-        view = LocationSelectView(self.user_id, server)
         base_locations = get_unique_base_locations()
-        options = [
-            discord.SelectOption(label=loc, value=loc)
-            for loc in base_locations
-        ]
-
-        # Обновляем select с локациями
-        select_menu = LocationSelectView.create_select(options)
+        view = make_location_select_view(self.user_id, server, base_locations)
 
         embed = discord.Embed(
             title="📢 Сообщить о торговце",
@@ -317,53 +310,52 @@ class ServerSelectView(discord.ui.View):
         await interaction.response.edit_message(embed=embed, view=view)
 
 
-class LocationSelectView(discord.ui.View):
-    """Выбор локации"""
+def make_location_select_view(user_id: int, server: str, locations: list):
+    """Динамическое создание view с выбором локации"""
 
-    def __init__(self, user_id: int, server: str):
-        super().__init__(timeout=300)
-        self.user_id = user_id
-        self.server = server
-
-    @staticmethod
-    def create_select(options):
-        """Создание select меню с опциями"""
-        select = discord.ui.Select(
-            placeholder="Выберите локацию...",
-            options=options,
-        )
-        return select
-
-    @discord.ui.select(placeholder="Выберите локацию...")
-    async def select_location(
-        self, interaction: discord.Interaction, select: discord.ui.Select
-    ):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message(
-                "Это не ваше меню!", ephemeral=True
+    class LocationSelectViewDynamic(discord.ui.View):
+        def __init__(self):
+            super().__init__(timeout=300)
+            options = [
+                discord.SelectOption(label=loc, value=loc)
+                for loc in locations
+            ]
+            select = discord.ui.Select(
+                placeholder="Выберите локацию...",
+                options=options,
             )
-            return
+            def make_callback():
+                async def callback(interaction: discord.Interaction):
+                    if interaction.user.id != user_id:
+                        await interaction.response.send_message(
+                            "Это не ваше меню!", ephemeral=True
+                        )
+                        return
 
-        location_base = select.values[0]
-        user_states[interaction.user.id]["location_base"] = location_base
-        user_states[interaction.user.id]["step"] = 3
+                    location_base = interaction.data["values"][0]
+                    user_states[interaction.user.id]["location_base"] = location_base
+                    user_states[interaction.user.id]["step"] = 3
 
-        # Проверяем, есть ли несколько вариантов этой локации
-        location_variants = get_locations_by_base(location_base)
+                    location_variants = get_locations_by_base(location_base)
 
-        if len(location_variants) == 1:
-            # Только один вариант - сразу записываем
-            location_name = location_variants[0]
-            await process_report(interaction, location_name)
-        else:
-            # Несколько вариантов - выбор конкретного здания
-            view = BuildingSelectView(self.user_id, self.server, location_variants)
-            embed = discord.Embed(
-                title="📢 Сообщить о торговце",
-                description=f"**Шаг 3/3:** Выберите конкретное здание для `{location_base}`:",
-                color=discord.Color.green(),
-            )
-            await interaction.response.edit_message(embed=embed, view=view)
+                    if len(location_variants) == 1:
+                        location_name = location_variants[0]
+                        await process_report(interaction, location_name)
+                    else:
+                        view = BuildingSelectView(user_id, server, location_variants)
+                        embed = discord.Embed(
+                            title="📢 Сообщить о торговце",
+                            description=f"**Шаг 3/3:** Выберите конкретное здание для `{location_base}`:",
+                            color=discord.Color.green(),
+                        )
+                        await interaction.response.edit_message(embed=embed, view=view)
+
+                return callback
+
+            select.callback = make_callback()
+            self.add_item(select)
+
+    return LocationSelectViewDynamic()
 
 
 class BuildingSelectView(discord.ui.View):
