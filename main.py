@@ -350,7 +350,8 @@ def make_location_select_view(user_id: int, server: str, locations: list):
                         if screenshot and os.path.exists(screenshot):
                             file = discord.File(screenshot, filename="preview.png")
                             embed.set_image(url="attachment://preview.png")
-                            await interaction.response.edit_message(embed=embed, view=view, file=file)
+                            await interaction.response.defer()
+                            await interaction.edit_original_response(embed=embed, view=view, file=file)
                         else:
                             await interaction.response.edit_message(embed=embed, view=view)
 
@@ -436,7 +437,8 @@ class BuildingSelectView(discord.ui.View):
         if screenshot and os.path.exists(screenshot):
             file = discord.File(screenshot, filename=f"preview.png")
             embed.set_image(url="attachment://preview.png")
-            await interaction.response.edit_message(embed=embed, view=self, file=file)
+            await interaction.response.defer()
+            await interaction.edit_original_response(embed=embed, view=self, file=file)
         else:
             await interaction.response.edit_message(embed=embed, view=self)
 
