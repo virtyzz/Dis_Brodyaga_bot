@@ -1,6 +1,7 @@
 import discord
 from discord.ext import commands, tasks
 import os
+import re
 import pytz
 from datetime import datetime, time
 
@@ -53,6 +54,11 @@ user_states = {}
 
 # Московский часовой пояс
 MSK = pytz.timezone("Europe/Moscow")
+
+
+def escape_markdown(text: str) -> str:
+    """Экранирование спецсимволов Discord markdown"""
+    return re.sub(r'([*_~`|\\])', r'\\\1', text)
 
 
 @bot.event
@@ -213,7 +219,7 @@ async def show_trader_locations(interaction: discord.Interaction):
 
             for loc_name, data in locations.items():
                 votes = len(data["users"])
-                users = data["users"]
+                users = [escape_markdown(u) for u in data["users"]]
                 users_formatted = ", ".join([f"**{users[0]}**"] + users[1:])
                 vote_label = f"({votes} {'голос' if votes == 1 else 'голоса' if votes < 5 else 'голосов'})"
                 prefix = "🏆 " if (is_clear_winner and loc_name == winner) else ""
