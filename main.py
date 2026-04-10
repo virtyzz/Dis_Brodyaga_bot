@@ -350,8 +350,8 @@ def make_location_select_view(user_id: int, server: str, locations: list):
                         if screenshot and os.path.exists(screenshot):
                             file = discord.File(screenshot, filename="preview.png")
                             embed.set_image(url="attachment://preview.png")
-                            await interaction.response.defer()
-                            await interaction.edit_original_response(embed=embed, view=view, file=file)
+                            await interaction.response.defer(ephemeral=True)
+                            await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
                         else:
                             await interaction.response.edit_message(embed=embed, view=view)
 
@@ -437,8 +437,8 @@ class BuildingSelectView(discord.ui.View):
         if screenshot and os.path.exists(screenshot):
             file = discord.File(screenshot, filename=f"preview.png")
             embed.set_image(url="attachment://preview.png")
-            await interaction.response.defer()
-            await interaction.edit_original_response(embed=embed, view=self, file=file)
+            await interaction.response.defer(ephemeral=True)
+            await interaction.followup.send(embed=embed, view=self, file=file, ephemeral=True)
         else:
             await interaction.response.edit_message(embed=embed, view=self)
 
@@ -505,9 +505,11 @@ async def process_report(interaction: discord.Interaction, location_name: str):
     if screenshot and os.path.exists(screenshot):
         file = discord.File(screenshot, filename=f"{location_name}.png")
         embed.set_image(url=f"attachment://{location_name}.png")
-        await interaction.response.edit_message(embed=embed, view=None, file=file)
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(embed=embed, file=file, ephemeral=True)
     else:
-        await interaction.response.edit_message(embed=embed, view=None)
+        await interaction.response.defer(ephemeral=True)
+        await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 # Обработка ошибок
