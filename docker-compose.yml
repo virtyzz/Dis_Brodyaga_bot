@@ -1,10 +1,10 @@
-version: "3.8"
-
 services:
   brodyaga-bot:
     build: .
     container_name: brodyaga_bot
     restart: unless-stopped
+    environment:
+      - PYTHONUNBUFFERED=1
     env_file:
       - .env
     volumes:
