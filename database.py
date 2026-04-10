@@ -90,51 +90,47 @@ def is_user_registered(user_id: int) -> bool:
 def add_trader_report(
     server: str, location_name: str, x_coord: int, y_coord: int, reporter_id: int
 ):
-    """Добавление или обновление отчета о торговце (1 голос = 1 пользователь на сервере)"""
+    """Добавление или обновление отчета (1 голос = 1 пользователь на сервере)"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Проверяем, есть ли уже отчет для этого сервера и локации
+    # Проверяем, есть ли уже запись этого пользователя на этом сервере
     cursor.execute(
-        "SELECT is_first_reporter FROM trader_reports WHERE server = ? AND location_name = ?",
-        (server, location_name),
+        "SELECT location_name FROM trader_reports WHERE server = ? AND reporter_id = ?",
+        (server, reporter_id),
     )
-    existing = cursor.fetchone()
+    existing_user = cursor.fetchone()
 
-    if existing:
-        # Уже есть запись — обновляем, флаг is_first_reporter не меняем
-        is_first = existing[0]
+    if existing_user and existing_user[0] == location_name:
+        # Пользователь уже сообщал эту локацию — просто обновляем время
         cursor.execute(
-            "UPDATE trader_reports SET x_coord = ?, y_coord = ?, reporter_id = ?, report_date = ? WHERE server = ? AND location_name = ?",
-            (x_coord, y_coord, reporter_id, datetime.now(), server, location_name),
+            "UPDATE trader_reports SET report_date = ?, x_coord = ?, y_coord = ? WHERE server = ? AND reporter_id = ?",
+            (datetime.now(), x_coord, y_coord, server, reporter_id),
         )
-    else:
-        # Проверяем, есть ли уже запись этого пользователя за другой локацией на этом сервере
+        conn.commit()
+        conn.close()
+        return False  # Не первый
+
+    if existing_user:
+        # Пользователь сообщал другую локацию — удаляем старый голос
         cursor.execute(
-            "SELECT location_name FROM trader_reports WHERE server = ? AND reporter_id = ?",
+            "DELETE FROM trader_reports WHERE server = ? AND reporter_id = ?",
             (server, reporter_id),
         )
-        old_location = cursor.fetchone()
-        if old_location:
-            # Удаляем старый голос пользователя за другую локацию
-            cursor.execute(
-                "DELETE FROM trader_reports WHERE server = ? AND reporter_id = ?",
-                (server, reporter_id),
-            )
 
-        # Проверяем, пуста ли теперь таблица для этой локации (чтобы дать is_first_reporter)
-        cursor.execute(
-            "SELECT COUNT(*) FROM trader_reports WHERE server = ? AND location_name = ?",
-            (server, location_name),
-        )
-        count = cursor.fetchone()[0]
-        is_first = count == 0
+    # Проверяем, есть ли уже эта локация в БД
+    cursor.execute(
+        "SELECT COUNT(*) FROM trader_reports WHERE server = ? AND location_name = ?",
+        (server, location_name),
+    )
+    count = cursor.fetchone()[0]
+    is_first = count == 0
 
-        # Новая запись
-        cursor.execute(
-            "INSERT INTO trader_reports (server, location_name, x_coord, y_coord, reporter_id, report_date, is_first_reporter) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (server, location_name, x_coord, y_coord, reporter_id, datetime.now(), is_first),
-        )
+    # Вставляем новую запись
+    cursor.execute(
+        "INSERT INTO trader_reports (server, location_name, x_coord, y_coord, reporter_id, report_date, is_first_reporter) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (server, location_name, x_coord, y_coord, reporter_id, datetime.now(), is_first),
+    )
 
     conn.commit()
     conn.close()
