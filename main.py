@@ -475,8 +475,8 @@ async def process_report(interaction: discord.Interaction, location_name: str):
         )
     else:
         embed = discord.Embed(
-            title="✅ Спасибо!",
-            description=f"Ваше сообщение о торговце в локации `{location_name}` на сервере `{server}` записано!",
+            title="✅ Данные обновлены!",
+            description=f"Ваше сообщение о торговце в локации `{location_name}` на сервере `{server}` обновлено!",
             color=discord.Color.blue(),
         )
 

@@ -90,26 +90,36 @@ def is_user_registered(user_id: int) -> bool:
 def add_trader_report(
     server: str, location_name: str, x_coord: int, y_coord: int, reporter_id: int
 ):
-    """Добавление отчета о торговце"""
+    """Добавление или обновление отчета о торговце"""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
     # Проверяем, есть ли уже отчет для этого сервера и локации
     cursor.execute(
-        "SELECT COUNT(*) FROM trader_reports WHERE server = ? AND location_name = ?",
+        "SELECT is_first_reporter FROM trader_reports WHERE server = ? AND location_name = ?",
         (server, location_name),
     )
-    count = cursor.fetchone()[0]
+    existing = cursor.fetchone()
 
-    is_first = count == 0
-
-    cursor.execute(
-        "INSERT INTO trader_reports (server, location_name, x_coord, y_coord, reporter_id, report_date, is_first_reporter) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (server, location_name, x_coord, y_coord, reporter_id, datetime.now(), is_first),
-    )
-    conn.commit()
-    conn.close()
-    return is_first
+    if existing:
+        # Уже есть запись — обновляем (но сохраняем флаг is_first_reporter)
+        is_first = existing[0]
+        cursor.execute(
+            "UPDATE trader_reports SET x_coord = ?, y_coord = ?, reporter_id = ?, report_date = ? WHERE server = ? AND location_name = ?",
+            (x_coord, y_coord, reporter_id, datetime.now(), server, location_name),
+        )
+        conn.commit()
+        conn.close()
+        return False  # Не первый
+    else:
+        # Новая запись
+        cursor.execute(
+            "INSERT INTO trader_reports (server, location_name, x_coord, y_coord, reporter_id, report_date, is_first_reporter) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (server, location_name, x_coord, y_coord, reporter_id, datetime.now(), True),
+        )
+        conn.commit()
+        conn.close()
+        return True  # Первый
 
 
 def get_trader_reports():
