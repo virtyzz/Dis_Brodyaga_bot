@@ -177,7 +177,6 @@ async def show_trader_locations(interaction: discord.Interaction):
         return
 
     # Группировка отчетов по серверам и локациям
-    # Структура: {server: {location: {"x": x, "y": y, "users": [username1, ...]}}}
     reports_grouped = {}
     for server, location_name, x, y, is_first, username in reports:
         if server not in reports_grouped:
@@ -187,9 +186,8 @@ async def show_trader_locations(interaction: discord.Interaction):
         if username not in reports_grouped[server][location_name]["users"]:
             reports_grouped[server][location_name]["users"].append(username)
 
-    # Собираем embeds и файлы для каждого сервера
-    embeds = []
-    files = []
+    # Собираем данные по каждому серверу
+    server_data = []
     for server in SERVERS:
         if server in reports_grouped:
             embed = discord.Embed(
@@ -197,8 +195,8 @@ async def show_trader_locations(interaction: discord.Interaction):
                 color=discord.Color.green(),
             )
 
+            screenshot_file = None
             for location_name, data in reports_grouped[server].items():
-                # Первый пользователь жирным
                 users = data["users"]
                 users_formatted = ", ".join([f"**{users[0]}**"] + users[1:])
 
@@ -208,34 +206,39 @@ async def show_trader_locations(interaction: discord.Interaction):
                     inline=False,
                 )
 
-                # Прикрепляем первый доступный скриншот
-                screenshot = get_screenshot_path(location_name)
-                if screenshot and os.path.exists(screenshot):
-                    f = discord.File(screenshot, filename="screenshot.png")
-                    embed.set_image(url="attachment://screenshot.png")
-                    files.append(f)
-                    break  # Только один скриншот на сервер
+                # Берём первый доступный скриншот
+                if screenshot_file is None:
+                    screenshot = get_screenshot_path(location_name)
+                    if screenshot and os.path.exists(screenshot):
+                        screenshot_file = discord.File(screenshot, filename=f"{server}_screenshot.png")
+                        embed.set_image(url=f"attachment://{server}_screenshot.png")
 
-            embeds.append(embed)
+            server_data.append({"embed": embed, "file": screenshot_file})
         else:
             embed = discord.Embed(
                 title=f"📍 {server}",
                 description="Нет данных о торговце на этом сервере.",
                 color=discord.Color.orange(),
             )
-            embeds.append(embed)
+            server_data.append({"embed": embed, "file": None})
 
-    # Отправляем первый embed
-    if files:
+    # Отправляем первое сообщение
+    first = server_data[0]
+    if first["file"]:
         await interaction.response.send_message(
-            embed=embeds[0], files=files[:1], ephemeral=True
+            embed=first["embed"], file=first["file"], ephemeral=True
         )
     else:
-        await interaction.response.send_message(embed=embeds[0], ephemeral=True)
+        await interaction.response.send_message(embed=first["embed"], ephemeral=True)
 
-    # Отправляем остальные сервера отдельными сообщениями
-    for i in range(1, len(embeds)):
-        await interaction.followup.send(embed=embeds[i], ephemeral=True)
+    # Отправляем остальные сервера
+    for item in server_data[1:]:
+        if item["file"]:
+            await interaction.followup.send(
+                embed=item["embed"], file=item["file"], ephemeral=True
+            )
+        else:
+            await interaction.followup.send(embed=item["embed"], ephemeral=True)
 
 
 async def start_report_flow(interaction: discord.Interaction):
