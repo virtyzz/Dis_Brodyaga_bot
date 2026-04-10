@@ -164,7 +164,7 @@ class MainMenuView(discord.ui.View):
 
 
 async def show_trader_locations(interaction: discord.Interaction):
-    """Показ местоположения торговца с голосованием по локациям"""
+    """Показ местоположения торговца с кнопками скриншотов"""
     reports = get_trader_reports()
 
     if not reports:
@@ -186,7 +186,8 @@ async def show_trader_locations(interaction: discord.Interaction):
         if username not in reports_grouped[server][location_name]["users"]:
             reports_grouped[server][location_name]["users"].append(username)
 
-    server_data = []
+    # Отправляем каждый сервер отдельно
+    first_server = True
     for server in SERVERS:
         if server in reports_grouped:
             embed = discord.Embed(
@@ -204,11 +205,8 @@ async def show_trader_locations(interaction: discord.Interaction):
                     max_votes = votes
                     winner = loc_name
 
-            # Скриншот только если лидер один и голосов > 1
-            screenshot_file = None
             is_clear_winner = max_votes > 1
             if is_clear_winner:
-                # Проверяем, нет ли ещё одной локации с таким же числом голосов
                 ties = sum(1 for d in locations.values() if len(d["users"]) == max_votes)
                 if ties > 1:
                     is_clear_winner = False
@@ -218,47 +216,60 @@ async def show_trader_locations(interaction: discord.Interaction):
                 users = data["users"]
                 users_formatted = ", ".join([f"**{users[0]}**"] + users[1:])
                 vote_label = f"({votes} {'голос' if votes == 1 else 'голоса' if votes < 5 else 'голосов'})"
-
-                # Выделяем победителя
                 prefix = "🏆 " if (is_clear_winner and loc_name == winner) else ""
+
                 embed.add_field(
                     name=f"{prefix}**{loc_name}** {vote_label}",
                     value=f"📍 Координаты: X: {data['x']}, Y: {data['y']}\n👥 Сообщили: {users_formatted}",
                     inline=False,
                 )
 
-                # Скриншот победителя
-                if is_clear_winner and loc_name == winner:
-                    screenshot = get_screenshot_path(loc_name)
-                    if screenshot and os.path.exists(screenshot):
-                        screenshot_file = discord.File(screenshot, filename=f"{server}_screenshot.png")
-                        embed.set_image(url=f"attachment://{server}_screenshot.png")
+            # Кнопки для скриншотов
+            view = discord.ui.View(timeout=120)
+            for loc_name in locations.keys():
+                screenshot = get_screenshot_path(loc_name)
+                if screenshot and os.path.exists(screenshot):
+                    btn = discord.ui.Button(
+                        label=f"📷 {loc_name}",
+                        style=discord.ButtonStyle.secondary,
+                    )
 
-            server_data.append({"embed": embed, "file": screenshot_file})
+                    def make_callback(sc_path, loc):
+                        async def callback(inter: discord.Interaction):
+                            if inter.user.id != interaction.user.id:
+                                await inter.response.send_message("Это не ваше сообщение!", ephemeral=True)
+                                return
+                            f = discord.File(sc_path, filename="loc.png")
+                            e = discord.Embed(title=f"📷 {loc}", color=discord.Color.blue())
+                            e.set_image(url="attachment://loc.png")
+                            await inter.response.send_message(embed=e, file=f, ephemeral=True)
+                        return callback
+
+                    btn.callback = make_callback(screenshot, loc_name)
+                    view.add_item(btn)
+
+            if first_server:
+                if view.children:
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
+                else:
+                    await interaction.response.send_message(embed=embed, ephemeral=True)
+                first_server = False
+            else:
+                if view.children:
+                    await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+                else:
+                    await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             embed = discord.Embed(
                 title=f"📍 {server}",
                 description="Нет данных о торговце на этом сервере.",
                 color=discord.Color.orange(),
             )
-            server_data.append({"embed": embed, "file": None})
-
-    # Отправляем
-    first = server_data[0]
-    if first["file"]:
-        await interaction.response.send_message(
-            embed=first["embed"], file=first["file"], ephemeral=True
-        )
-    else:
-        await interaction.response.send_message(embed=first["embed"], ephemeral=True)
-
-    for item in server_data[1:]:
-        if item["file"]:
-            await interaction.followup.send(
-                embed=item["embed"], file=item["file"], ephemeral=True
-            )
-        else:
-            await interaction.followup.send(embed=item["embed"], ephemeral=True)
+            if first_server:
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+                first_server = False
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
 
 
 async def start_report_flow(interaction: discord.Interaction):
