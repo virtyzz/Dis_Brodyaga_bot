@@ -176,83 +176,66 @@ async def show_trader_locations(interaction: discord.Interaction):
         await interaction.response.send_message(embed=embed, ephemeral=True)
         return
 
-    # Группировка отчетов по серверам
-    reports_by_server = {}
+    # Группировка отчетов по серверам и локациям
+    # Структура: {server: {location: {"x": x, "y": y, "users": [username1, ...]}}}
+    reports_grouped = {}
     for server, location_name, x, y, is_first, username in reports:
-        if server not in reports_by_server:
-            reports_by_server[server] = []
-        reports_by_server[server].append(
-            {
-                "location": location_name,
-                "x": x,
-                "y": y,
-                "is_first": is_first,
-                "username": username,
-            }
-        )
+        if server not in reports_grouped:
+            reports_grouped[server] = {}
+        if location_name not in reports_grouped[server]:
+            reports_grouped[server][location_name] = {"x": x, "y": y, "users": []}
+        if username not in reports_grouped[server][location_name]["users"]:
+            reports_grouped[server][location_name]["users"].append(username)
 
-    # Создаем embed для каждого сервера
+    # Собираем embeds и файлы для каждого сервера
     embeds = []
+    files = []
     for server in SERVERS:
-        if server in reports_by_server:
+        if server in reports_grouped:
             embed = discord.Embed(
                 title=f"📍 {server}",
                 color=discord.Color.green(),
             )
 
-            for report in reports_by_server[server]:
-                screenshot = get_screenshot_path(report["location"])
-
-                # Формируем список пользователей (первый жирным)
-                # Собираем всех пользователей для этой локации
-                all_users_for_location = [
-                    r["username"]
-                    for r in reports_by_server[server]
-                    if r["location"] == report["location"]
-                ]
-
-                # Убираем дубликаты сохраняя порядок
-                seen = set()
-                unique_users = []
-                for u in all_users_for_location:
-                    if u not in seen:
-                        unique_users.append(u)
-                        seen.add(u)
-
+            for location_name, data in reports_grouped[server].items():
                 # Первый пользователь жирным
-                users_formatted = ", ".join(
-                    [f"**{unique_users[0]}**"] + unique_users[1:]
-                )
+                users = data["users"]
+                users_formatted = ", ".join([f"**{users[0]}**"] + users[1:])
 
                 embed.add_field(
-                    name=f"**{report['location']}**",
-                    value=f"📍 Координаты: X: {report['x']}, Y: {report['y']}\n👥 Сообщили: {users_formatted}",
+                    name=f"**{location_name}**",
+                    value=f"📍 Координаты: X: {data['x']}, Y: {data['y']}\n👥 Сообщили: {users_formatted}",
                     inline=False,
                 )
 
-                # Прикрепляем скриншот если есть
+                # Прикрепляем первый доступный скриншот
+                screenshot = get_screenshot_path(location_name)
                 if screenshot and os.path.exists(screenshot):
-                    file = discord.File(screenshot, filename=f"{report['location']}.png")
-                    embed.set_image(
-                        url=f"attachment://{report['location']}.png"
-                    )
-                    embeds.append((embed, file))
-                else:
-                    embeds.append((embed, None))
+                    f = discord.File(screenshot, filename="screenshot.png")
+                    embed.set_image(url="attachment://screenshot.png")
+                    files.append(f)
+                    break  # Только один скриншот на сервер
+
+            embeds.append(embed)
         else:
             embed = discord.Embed(
                 title=f"📍 {server}",
                 description="Нет данных о торговце на этом сервере.",
                 color=discord.Color.orange(),
             )
-            embeds.append((embed, None))
+            embeds.append(embed)
 
     # Отправляем первый embed
-    first_embed, first_file = embeds[0]
-    if first_file:
-        await interaction.response.send_message(embed=first_embed, file=first_file)
+    if files:
+        await interaction.response.send_message(
+            embed=embeds[0], files=files[:1], ephemeral=True
+        )
     else:
-        await interaction.response.send_message(embed=first_embed)
+        await interaction.response.send_message(embed=embeds[0], ephemeral=True)
+
+    # Отправляем остальные сервера отдельными сообщениями
+    for i in range(1, len(embeds)):
+        await interaction.followup.send(embed=embeds[i], ephemeral=True)
 
 
 async def start_report_flow(interaction: discord.Interaction):
