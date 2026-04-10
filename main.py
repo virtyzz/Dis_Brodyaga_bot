@@ -343,12 +343,16 @@ def make_location_select_view(user_id: int, server: str, locations: list):
                         await process_report(interaction, location_name)
                     else:
                         view = BuildingSelectView(user_id, server, location_variants)
-                        embed = discord.Embed(
-                            title="📢 Сообщить о торговце",
-                            description=f"**Шаг 3/3:** Выберите конкретное здание для `{location_base}`:",
-                            color=discord.Color.green(),
-                        )
-                        await interaction.response.edit_message(embed=embed, view=view)
+                        view._update_buttons()
+                        location_name = location_variants[0]
+                        embed = view._build_embed()
+                        screenshot = get_screenshot_path(location_name)
+                        if screenshot and os.path.exists(screenshot):
+                            file = discord.File(screenshot, filename="preview.png")
+                            embed.set_image(url="attachment://preview.png")
+                            await interaction.response.edit_message(embed=embed, view=view, file=file)
+                        else:
+                            await interaction.response.edit_message(embed=embed, view=view)
 
                 return callback
 
@@ -359,37 +363,93 @@ def make_location_select_view(user_id: int, server: str, locations: list):
 
 
 class BuildingSelectView(discord.ui.View):
-    """Выбор конкретного здания"""
+    """Выбор конкретного здания с превью скриншота"""
 
     def __init__(self, user_id: int, server: str, locations: list):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.server = server
         self.locations = locations
+        self.current_index = 0
 
-        # Добавляем кнопки для каждого здания
-        for location in locations:
-            button = discord.ui.Button(
-                label=location,
-                style=discord.ButtonStyle.secondary,
-                custom_id=f"building_{location}",
-            )
-            button.callback = self.make_callback(location)
-            self.add_item(button)
+    def _build_embed(self):
+        location_name = self.locations[self.current_index]
+        embed = discord.Embed(
+            title="📢 Выберите здание",
+            description=f"**{location_name}**\n({self.current_index + 1}/{len(self.locations)})",
+            color=discord.Color.green(),
+        )
+        return embed
 
-    def make_callback(self, location_name: str):
-        """Создание callback для кнопки здания"""
+    def _update_buttons(self):
+        # Удаляем все кнопки и пересоздаём
+        self.clear_items()
 
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message(
-                    "Это не ваше меню!", ephemeral=True
-                )
-                return
+        btn_prev = discord.ui.Button(
+            label="⬅️ Назад",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.current_index == 0,
+        )
+        btn_prev.callback = self._prev_callback
+        self.add_item(btn_prev)
 
-            await process_report(interaction, location_name)
+        btn_select = discord.ui.Button(
+            label="✅ Выбрать это",
+            style=discord.ButtonStyle.success,
+        )
+        btn_select.callback = self._select_callback
+        self.add_item(btn_select)
 
-        return callback
+        btn_next = discord.ui.Button(
+            label="Вперёд ➡️",
+            style=discord.ButtonStyle.secondary,
+            disabled=self.current_index == len(self.locations) - 1,
+        )
+        btn_next.callback = self._next_callback
+        self.add_item(btn_next)
+
+    async def _prev_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            return
+        self.current_index -= 1
+        self._update_buttons()
+        await self._send_update(interaction)
+
+    async def _next_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            return
+        self.current_index += 1
+        self._update_buttons()
+        await self._send_update(interaction)
+
+    async def _select_callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню!", ephemeral=True)
+            return
+        location_name = self.locations[self.current_index]
+        await process_report(interaction, location_name)
+
+    async def _send_update(self, interaction: discord.Interaction):
+        location_name = self.locations[self.current_index]
+        embed = self._build_embed()
+        screenshot = get_screenshot_path(location_name)
+        if screenshot and os.path.exists(screenshot):
+            file = discord.File(screenshot, filename=f"preview.png")
+            embed.set_image(url="attachment://preview.png")
+            await interaction.response.edit_message(embed=embed, view=self, file=file)
+        else:
+            await interaction.response.edit_message(embed=embed, view=self)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню!", ephemeral=True)
+            return False
+        return True
+
+    async def on_timeout(self):
+        for item in self.children:
+            if hasattr(item, "disabled"):
+                item.disabled = True
 
 
 async def process_report(interaction: discord.Interaction, location_name: str):
