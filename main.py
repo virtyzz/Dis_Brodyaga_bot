@@ -192,7 +192,7 @@ class MainMenuView(discord.ui.View):
         )
         embed.add_field(
             name="🔄 Обновление данных",
-            value="Данные сбрасываются ежедневно в 00:00 по московскому времени и сохраняются в архив.",
+            value="Данные сбрасываются ежедневно в 00:00 по московскому времени.",
             inline=False,
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
