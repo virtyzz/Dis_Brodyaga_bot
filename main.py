@@ -177,7 +177,7 @@ class MainMenuView(discord.ui.View):
     ):
         await interaction.response.send_message(
             "Ссылка для добавления и отправки друзьям:\n"
-            "https://discord.com/oauth2/authorize?client_id=1492221304173236406",
+            "https://discord.com/oauth2/authorize?client_id=1492221304173236406&permissions=274878023680&integration_type=0&scope=bot+applications.commands",
             ephemeral=True,
         )
 
