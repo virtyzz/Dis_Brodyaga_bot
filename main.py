@@ -171,6 +171,16 @@ class MainMenuView(discord.ui.View):
         ensure_user_registered(interaction.user)
         await start_report_flow(interaction)
 
+    @discord.ui.button(label="🔗 Поделиться или добавить себе", style=discord.ButtonStyle.secondary, custom_id="main_menu_share_bot")
+    async def share_bot(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.response.send_message(
+            "Ссылка для добавления и отправки друзьям:\n"
+            "https://discord.com/oauth2/authorize?client_id=1492221304173236406",
+            ephemeral=True,
+        )
+
     @discord.ui.button(label="ℹ️ Помощь", style=discord.ButtonStyle.secondary, custom_id="main_menu_help")
     async def help_info(
         self, interaction: discord.Interaction, button: discord.ui.Button
