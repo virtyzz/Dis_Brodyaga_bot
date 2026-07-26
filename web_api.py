@@ -25,6 +25,8 @@ CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
 REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")
 MAP_PUBLIC_URL = os.getenv("MAP_PUBLIC_URL", "").rstrip("/")
 SESSION_SECRET = os.getenv("BRODYAGA_SESSION_SECRET", "")
+COOKIE_DOMAIN = os.getenv("BRODYAGA_SESSION_COOKIE_DOMAIN", "").strip()
+CORS_ORIGIN = os.getenv("BRODYAGA_CORS_ORIGIN", MAP_PUBLIC_URL).rstrip("/")
 COOKIE_NAME = "brodyaga_session"
 STATE_TTL = 600
 SESSION_TTL = 7 * 24 * 3600
@@ -70,6 +72,14 @@ class ApiHandler(BaseHTTPRequestHandler):
         else:
             self.send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
+    def do_OPTIONS(self) -> None:
+        self.send_response(HTTPStatus.NO_CONTENT)
+        self.send_cors_headers()
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-CSRF-Token")
+        self.send_header("Access-Control-Max-Age", "600")
+        self.end_headers()
+
     def start_oauth(self) -> None:
         if not all((CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, MAP_PUBLIC_URL, SESSION_SECRET)):
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "OAuth is not configured"})
@@ -102,7 +112,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         SESSIONS[session_id] = {"user_id": str(user["id"]), "username": user.get("global_name") or user["username"], "csrf": secrets.token_urlsafe(24), "expires": time.time() + SESSION_TTL}
         self.send_response(HTTPStatus.FOUND)
         cookie_value = f"{session_id}.{sign_session(session_id)}"
-        self.send_header("Set-Cookie", f"{COOKIE_NAME}={cookie_value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={SESSION_TTL}")
+        domain_part = f"; Domain={COOKIE_DOMAIN}" if COOKIE_DOMAIN else ""
+        self.send_header("Set-Cookie", f"{COOKIE_NAME}={cookie_value}; Path=/{domain_part}; HttpOnly; Secure; SameSite=Lax; Max-Age={SESSION_TTL}")
         self.send_header("Location", saved["return_to"])
         self.end_headers()
 
@@ -169,8 +180,15 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        self.send_cors_headers()
         self.end_headers()
         self.wfile.write(body)
+
+    def send_cors_headers(self) -> None:
+        if CORS_ORIGIN and self.headers.get("Origin") == CORS_ORIGIN:
+            self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
+            self.send_header("Access-Control-Allow-Credentials", "true")
+            self.send_header("Vary", "Origin")
 
     def redirect(self, location: str) -> None:
         self.send_response(HTTPStatus.FOUND)
