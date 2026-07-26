@@ -24,6 +24,11 @@ CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
 REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")
 MAP_PUBLIC_URL = os.getenv("MAP_PUBLIC_URL", "").rstrip("/")
+MAP_ALLOWED_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in os.getenv("MAP_ALLOWED_ORIGINS", MAP_PUBLIC_URL).split(",")
+    if origin.strip()
+}
 SESSION_SECRET = os.getenv("BRODYAGA_SESSION_SECRET", "")
 COOKIE_DOMAIN = os.getenv("BRODYAGA_SESSION_COOKIE_DOMAIN", "").strip()
 CORS_ORIGIN = os.getenv("BRODYAGA_CORS_ORIGIN", MAP_PUBLIC_URL).rstrip("/")
@@ -45,6 +50,10 @@ def json_request(url: str, *, data: dict | None = None, headers: dict | None = N
 
 def sign_session(session_id: str) -> str:
     return hmac.new(SESSION_SECRET.encode("utf-8"), session_id.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def is_allowed_return_url(value: str) -> bool:
+    return any(value == origin or value.startswith(origin + "/") for origin in MAP_ALLOWED_ORIGINS)
 
 
 class ApiHandler(BaseHTTPRequestHandler):
@@ -86,7 +95,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         return_to = query.get("return_to", [MAP_PUBLIC_URL])[0]
-        if not return_to.startswith(MAP_PUBLIC_URL + "/") and return_to != MAP_PUBLIC_URL:
+        if not is_allowed_return_url(return_to):
             self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid return URL"})
             return
         state = secrets.token_urlsafe(32)
