@@ -7,9 +7,11 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from http import HTTPStatus
@@ -18,6 +20,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from coords_handler import SERVERS, get_all_locations, get_location_coords
 from database import add_trader_report, get_trader_report_summary, init_database, register_user
+
+
+logging.basicConfig(level=logging.INFO)
+LOGGER = logging.getLogger(__name__)
 
 
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
@@ -114,7 +120,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         try:
             token = json_request("https://discord.com/api/v10/oauth2/token", data={"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT_URI}, headers={"Content-Type": "application/x-www-form-urlencoded"})
             user = json_request("https://discord.com/api/v10/users/@me", headers={"Authorization": f"Bearer {token['access_token']}"})
+        except urllib.error.HTTPError as error:
+            details = error.read().decode("utf-8", errors="replace")
+            LOGGER.error("Discord OAuth HTTP %s: %s", error.code, details)
+            self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": "Discord authorization failed"})
+            return
         except Exception:
+            LOGGER.exception("Discord OAuth request failed")
             self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": "Discord authorization failed"})
             return
         session_id = secrets.token_urlsafe(32)
