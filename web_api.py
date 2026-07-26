@@ -38,7 +38,11 @@ MAP_ALLOWED_ORIGINS = {
 }
 SESSION_SECRET = os.getenv("BRODYAGA_SESSION_SECRET", "")
 COOKIE_DOMAIN = os.getenv("BRODYAGA_SESSION_COOKIE_DOMAIN", "").strip()
-CORS_ORIGIN = os.getenv("BRODYAGA_CORS_ORIGIN", MAP_PUBLIC_URL).rstrip("/")
+CORS_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in os.getenv("BRODYAGA_CORS_ORIGIN", MAP_PUBLIC_URL).split(",")
+    if origin.strip()
+}
 COOKIE_NAME = "brodyaga_session"
 STATE_TTL = 600
 SESSION_TTL = 7 * 24 * 3600
@@ -208,8 +212,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def send_cors_headers(self) -> None:
-        if CORS_ORIGIN and self.headers.get("Origin") == CORS_ORIGIN:
-            self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin in CORS_ORIGINS:
+            self.send_header("Access-Control-Allow-Origin", origin)
             self.send_header("Access-Control-Allow-Credentials", "true")
             self.send_header("Vary", "Origin")
 
