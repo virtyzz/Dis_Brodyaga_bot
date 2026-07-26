@@ -24,6 +24,7 @@ from database import add_trader_report, get_trader_report_summary, init_database
 
 logging.basicConfig(level=logging.INFO)
 LOGGER = logging.getLogger(__name__)
+DISCORD_USER_AGENT = "DiscordBot (https://github.com/virtyzz/Dis_Brodyaga_bot, 1.0)"
 
 
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
@@ -49,7 +50,8 @@ LAST_REPORTS: dict[tuple[str, str], float] = {}
 
 def json_request(url: str, *, data: dict | None = None, headers: dict | None = None) -> dict:
     encoded = None if data is None else urllib.parse.urlencode(data).encode("utf-8")
-    request = urllib.request.Request(url, data=encoded, headers=headers or {})
+    request_headers = {"User-Agent": DISCORD_USER_AGENT, **(headers or {})}
+    request = urllib.request.Request(url, data=encoded, headers=request_headers)
     with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
