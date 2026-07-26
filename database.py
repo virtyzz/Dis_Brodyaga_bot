@@ -152,6 +152,21 @@ def get_trader_reports():
     return reports
 
 
+def get_trader_report_summary():
+    """Return public aggregate reports without Discord user data."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT server, location_name, x_coord, y_coord, COUNT(*)
+        FROM trader_reports
+        GROUP BY server, location_name, x_coord, y_coord
+        ORDER BY server, location_name
+    """)
+    reports = cursor.fetchall()
+    conn.close()
+    return reports
+
+
 def has_trader_report_for_server(server: str, location_name: str) -> bool:
     """Проверка, есть ли уже отчет для сервера и локации"""
     conn = sqlite3.connect(DB_PATH, timeout=10)

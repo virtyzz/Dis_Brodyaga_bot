@@ -9,3 +9,16 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+  brodyaga-api:
+    build: .
+    container_name: brodyaga_api
+    restart: unless-stopped
+    command: python web_api.py
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    ports:
+      - "127.0.0.1:8099:8099"

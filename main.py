@@ -58,6 +58,7 @@ user_states = {}
 
 # Таймаут состояния (5 минут в секундах)
 USER_STATE_TIMEOUT = 300
+REPORT_CODE_PREFIX = "73"
 
 # Московский часовой пояс
 MSK = pytz.timezone("Europe/Moscow")
@@ -66,6 +67,60 @@ MSK = pytz.timezone("Europe/Moscow")
 def escape_markdown(text: str) -> str:
     """Экранирование спецсимволов Discord markdown"""
     return re.sub(r'([*_~`|\\])', r'\\\1', text)
+
+
+def decode_map_report_code(content: str):
+    """Return (server, location_name) for a valid 10-digit map report code."""
+    match = re.fullmatch(r"\s*(\d{10})\s*", content)
+    if not match:
+        return None
+
+    code = match.group(1)
+    if not code.startswith(REPORT_CODE_PREFIX):
+        return None
+
+    location_id = int(code[2:6])
+    server_id = int(code[6:8])
+    checksum = int(code[8:10])
+    expected_checksum = (location_id * 17 + server_id * 31 + 73) % 100
+    locations = get_all_locations()
+
+    if checksum != expected_checksum or not 1 <= server_id <= len(SERVERS):
+        return None
+    if not 1 <= location_id <= len(locations):
+        return None
+
+    return SERVERS[server_id - 1], locations[location_id - 1]
+
+
+@bot.event
+async def on_message(message):
+    """Accept a copied report code from the map in the bot's direct messages."""
+    if message.author.bot:
+        return
+
+    report = decode_map_report_code(message.content)
+    if report:
+        if message.guild is not None:
+            await message.reply("Отправьте код боту в личном сообщении.")
+            return
+
+        server, location_name = report
+        coords = get_location_coords(location_name)
+        if not coords:
+            await message.reply("Не удалось найти локацию для этого кода.")
+            return
+
+        x, y = coords
+        is_first = add_trader_report(server, location_name, x, y, message.author.id)
+        status = "Вы первый сообщили" if is_first else "Ваше сообщение обновлено"
+        await message.reply(
+            f"✅ {status}: `{location_name}` на сервере `{server}`.\n"
+            f"Координаты: X: {x}, Y: {y}"
+        )
+        return
+
+    await bot.process_commands(message)
 
 
 @bot.event
