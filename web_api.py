@@ -29,7 +29,11 @@ DISCORD_USER_AGENT = "DiscordBot (https://github.com/virtyzz/Dis_Brodyaga_bot, 1
 
 CLIENT_ID = os.getenv("DISCORD_CLIENT_ID", "")
 CLIENT_SECRET = os.getenv("DISCORD_CLIENT_SECRET", "")
-REDIRECT_URI = os.getenv("DISCORD_REDIRECT_URI", "")
+REDIRECT_URIS = {
+    uri.strip()
+    for uri in os.getenv("DISCORD_REDIRECT_URIS", os.getenv("DISCORD_REDIRECT_URI", "")).split(",")
+    if uri.strip()
+}
 MAP_PUBLIC_URL = os.getenv("MAP_PUBLIC_URL", "").rstrip("/")
 MAP_ALLOWED_ORIGINS = {
     origin.strip().rstrip("/")
@@ -68,6 +72,17 @@ def is_allowed_return_url(value: str) -> bool:
     return any(value == origin or value.startswith(origin + "/") for origin in MAP_ALLOWED_ORIGINS)
 
 
+def get_redirect_uri(return_to: str) -> str | None:
+    parsed_return_to = urllib.parse.urlparse(return_to)
+    return_origin = f"{parsed_return_to.scheme}://{parsed_return_to.netloc}"
+    for redirect_uri in REDIRECT_URIS:
+        parsed_redirect = urllib.parse.urlparse(redirect_uri)
+        redirect_origin = f"{parsed_redirect.scheme}://{parsed_redirect.netloc}"
+        if redirect_origin == return_origin:
+            return redirect_uri
+    return None
+
+
 class ApiHandler(BaseHTTPRequestHandler):
     server_version = "BrodyagaApi/1.0"
 
@@ -102,7 +117,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def start_oauth(self) -> None:
-        if not all((CLIENT_ID, CLIENT_SECRET, REDIRECT_URI, MAP_PUBLIC_URL, SESSION_SECRET)):
+        if not all((CLIENT_ID, CLIENT_SECRET, REDIRECT_URIS, MAP_PUBLIC_URL, SESSION_SECRET)):
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "OAuth is not configured"})
             return
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
@@ -110,9 +125,13 @@ class ApiHandler(BaseHTTPRequestHandler):
         if not is_allowed_return_url(return_to):
             self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid return URL"})
             return
+        redirect_uri = get_redirect_uri(return_to)
+        if not redirect_uri:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "OAuth callback is not configured for this origin"})
+            return
         state = secrets.token_urlsafe(32)
-        OAUTH_STATES[state] = {"return_to": return_to, "expires": time.time() + STATE_TTL}
-        params = urllib.parse.urlencode({"client_id": CLIENT_ID, "response_type": "code", "redirect_uri": REDIRECT_URI, "scope": "identify", "state": state})
+        OAUTH_STATES[state] = {"return_to": return_to, "redirect_uri": redirect_uri, "expires": time.time() + STATE_TTL}
+        params = urllib.parse.urlencode({"client_id": CLIENT_ID, "response_type": "code", "redirect_uri": redirect_uri, "scope": "identify", "state": state})
         self.redirect(f"https://discord.com/oauth2/authorize?{params}")
 
     def finish_oauth(self) -> None:
@@ -124,7 +143,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Invalid or expired OAuth state"})
             return
         try:
-            token = json_request("https://discord.com/api/v10/oauth2/token", data={"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "grant_type": "authorization_code", "code": code, "redirect_uri": REDIRECT_URI}, headers={"Content-Type": "application/x-www-form-urlencoded"})
+            token = json_request("https://discord.com/api/v10/oauth2/token", data={"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "grant_type": "authorization_code", "code": code, "redirect_uri": saved["redirect_uri"]}, headers={"Content-Type": "application/x-www-form-urlencoded"})
             user = json_request("https://discord.com/api/v10/users/@me", headers={"Authorization": f"Bearer {token['access_token']}"})
         except urllib.error.HTTPError as error:
             details = error.read().decode("utf-8", errors="replace")
