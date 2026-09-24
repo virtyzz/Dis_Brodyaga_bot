@@ -1004,10 +1004,13 @@ class TestCardsV2View(discord.ui.LayoutView):
     def __init__(self, attachment_names: dict[str, str]):
         super().__init__(timeout=300)
         locations = get_all_locations()[:5]
-        container = discord.ui.Container(
-            discord.ui.TextDisplay("# Тест 1 · Карточки\n5 точек с изображением и двумя действиями.")
+        self.add_item(
+            discord.ui.TextDisplay(
+                "# Тест 1 · Карточки\n5 точек с изображением и двумя действиями."
+            )
         )
         for index, location in enumerate(locations):
+            card = discord.ui.Container()
             accessory = (
                 discord.ui.Thumbnail(
                     f"attachment://{attachment_names[location]}", description=location
@@ -1015,19 +1018,19 @@ class TestCardsV2View(discord.ui.LayoutView):
                 if location in attachment_names
                 else TestActionButton("Нет фото")
             )
-            container.add_item(
+            card.add_item(
                 discord.ui.Section(
                     f"**{location}**\n{test_location_status(index)}",
                     accessory=accessory,
                 )
             )
-            container.add_item(
+            card.add_item(
                 discord.ui.ActionRow(
                     TestActionButton("Не найден", discord.ButtonStyle.success),
                     TestActionButton("Нашёл", discord.ButtonStyle.primary),
                 )
             )
-        self.add_item(container)
+            self.add_item(card)
 
 
 def build_test_cards_v2_view() -> tuple[TestCardsV2View, list[discord.File]]:
