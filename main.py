@@ -909,7 +909,7 @@ class LocationStatusV2View(discord.ui.LayoutView):
             container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
 
         group_titles = {
-            "found": f"## 📍 Торговец найден · {len(found_locations)}",
+            "found": f"## 🕵️ Торговец найден · {len(found_locations)}",
             "unverified": f"## ❔ Ещё не проверяли · {len(unverified_locations)}",
             "checked": f"## ✅ Проверено, торговца нет · {len(checked_locations)}",
         }
