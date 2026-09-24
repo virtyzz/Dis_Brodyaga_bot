@@ -241,25 +241,6 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Тест 1", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_v2_cards", row=3)
-    async def test_v2_cards(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        view, files = build_test_cards_v2_view()
-        await interaction.response.send_message(view=view, files=files, ephemeral=True)
-
-    @discord.ui.button(label="Тест 2", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_v2_inline", row=3)
-    async def test_v2_inline(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await interaction.response.send_message(view=TestInlineV2View(), ephemeral=True)
-
-    @discord.ui.button(label="Тест 3", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_v2_actions", row=3)
-    async def test_v2_actions(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await interaction.response.send_message(view=TestActionsV2View(), ephemeral=True)
-
 async def show_help(interaction: discord.Interaction):
         embed = discord.Embed(
             title="ℹ️ Помощь",
@@ -816,164 +797,7 @@ def humanize_check_time(value) -> str:
     return f"{hours} ч назад"
 
 
-class LocationCheckV2Button(discord.ui.Button):
-    """A right-side action button in one Components V2 location row."""
-
-    def __init__(
-        self, user_id: int, server: str, location_name: str,
-        is_checked_by_user: bool, is_trader_confirmed: bool,
-    ):
-        super().__init__(
-            label=("Подтверждён" if is_trader_confirmed else "Отменить" if is_checked_by_user else "Не найден"),
-            style=(
-                discord.ButtonStyle.secondary if is_trader_confirmed
-                else discord.ButtonStyle.danger if is_checked_by_user
-                else discord.ButtonStyle.success
-            ),
-            disabled=is_trader_confirmed,
-        )
-        self.user_id = user_id
-        self.server = server
-        self.location_name = location_name
-        self.is_checked_by_user = is_checked_by_user
-
-    async def callback(self, interaction: discord.Interaction):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
-            return
-        if self.is_checked_by_user:
-            remove_location_check(self.server, self.location_name, self.user_id)
-            notice = f"Отметка отменена: {self.location_name}"
-        elif add_location_check(self.server, self.location_name, self.user_id):
-            notice = f"Отметка сохранена: {self.location_name}"
-        else:
-            notice = f"Для {self.location_name} уже подтверждён торговец."
-        await self.view.render(interaction, notice)
-
-
-class LocationStatusV2View(discord.ui.LayoutView):
-    """Components V2 layout: each location has text and an inline action."""
-
-    PAGE_SIZE = 9
-
-    def __init__(self, user_id: int, server: str, page: int = 0, notice: str | None = None):
-        super().__init__(timeout=300)
-        self.user_id = user_id
-        self.server = server
-        self.page = page
-        self.notice = notice
-        self._build_layout()
-
-    def _build_layout(self):
-        checks = {
-            location: (checked_at, count)
-            for location, checked_at, count in get_location_check_summary(self.server)
-        }
-        reports = {
-            location: count
-            for report_server, location, _x, _y, count in get_trader_report_summary()
-            if report_server == self.server
-        }
-        locations = get_all_locations()
-        pages = max(1, (len(locations) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
-        self.page = max(0, min(self.page, pages - 1))
-        checked_count = sum(
-            1 for location in locations if location in checks and location not in reports
-        )
-        user_checks = get_user_checked_locations(self.server, self.user_id)
-
-        header = (
-            f"# Поиск · {self.server}\n"
-            f"Проверено: **{checked_count}/{len(locations)}** · Страница {self.page + 1}/{pages}\n"
-            "Зелёная кнопка — отметить «не найден», красная — отменить свою отметку."
-        )
-        container = discord.ui.Container(discord.ui.TextDisplay(header))
-        if self.notice:
-            container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
-        container.add_item(discord.ui.Separator())
-
-        for location in locations[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]:
-            if location in reports:
-                status = f"Торговец подтверждён · сообщений: {reports[location]}"
-            elif location in checks:
-                checked_at, count = checks[location]
-                people = "игрок" if count == 1 else "игрока" if 2 <= count <= 4 else "игроков"
-                status = f"Проверено {humanize_check_time(checked_at)} · {count} {people}"
-            else:
-                status = "Ещё не проверяли"
-            button = LocationCheckV2Button(
-                self.user_id,
-                self.server,
-                location,
-                location in user_checks,
-                location in reports,
-            )
-            container.add_item(
-                discord.ui.Section(f"**{location}**\n{status}", accessory=button)
-            )
-
-        navigation = discord.ui.ActionRow(
-            self._navigation_button("Назад", -1, self.page <= 0),
-            self._refresh_button(),
-            self._navigation_button("Вперёд", 1, self.page >= pages - 1),
-        )
-        container.add_item(navigation)
-        self.add_item(container)
-
-    def _navigation_button(self, label: str, step: int, disabled: bool):
-        button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, disabled=disabled)
-
-        async def callback(interaction: discord.Interaction):
-            await self.render(interaction, page=self.page + step)
-
-        button.callback = callback
-        return button
-
-    def _refresh_button(self):
-        button = discord.ui.Button(label="Обновить", style=discord.ButtonStyle.primary)
-
-        async def callback(interaction: discord.Interaction):
-            await self.render(interaction)
-
-        button.callback = callback
-        return button
-
-    async def render(self, interaction: discord.Interaction, notice: str | None = None, page: int | None = None):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
-            return
-        next_view = LocationStatusV2View(
-            self.user_id,
-            self.server,
-            self.page if page is None else page,
-            notice,
-        )
-        await interaction.response.edit_message(view=next_view)
-
-
-def test_location_status(index: int) -> str:
-    """Static labels for visual-only Components V2 layout previews."""
-    variants = (
-        "Ещё не проверяли",
-        "Проверено 12 мин назад · 2 игрока",
-        "Торговец подтверждён · 3 сообщения",
-    )
-    return variants[index % len(variants)]
-
-
-class TestActionButton(discord.ui.Button):
-    """A non-mutating button used only by the three layout previews."""
-
-    def __init__(self, label: str, style: discord.ButtonStyle = discord.ButtonStyle.secondary):
-        super().__init__(label=label, style=style)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "Это тестовый макет: данные не изменены.", ephemeral=True
-        )
-
-
-class TestPhotoSelect(discord.ui.Select):
+class LocationPhotoSelect(discord.ui.Select):
     def __init__(self, locations: list[str]):
         self.locations = locations
         super().__init__(
@@ -998,98 +822,134 @@ class TestPhotoSelect(discord.ui.Select):
         )
 
 
-class TestCardsV2View(discord.ui.LayoutView):
-    """Test 1: five rich cards, a thumbnail, and two actions per location."""
+class LocationStatusActionButton(discord.ui.Button):
+    """A real status action for one location in the compact search layout."""
 
-    def __init__(self, attachment_names: dict[str, str]):
+    def __init__(self, user_id: int, server: str, location_name: str, action: str, disabled: bool = False):
+        labels = {"check": "Не найден", "cancel": "Отменить", "found": "Нашёл"}
+        styles = {
+            "check": discord.ButtonStyle.success,
+            "cancel": discord.ButtonStyle.danger,
+            "found": discord.ButtonStyle.primary,
+        }
+        super().__init__(label=labels[action], style=styles[action], disabled=disabled)
+        self.user_id = user_id
+        self.server = server
+        self.location_name = location_name
+        self.action = action
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return
+        if self.action == "cancel":
+            remove_location_check(self.server, self.location_name, self.user_id)
+            notice = f"Отметка отменена: {self.location_name}"
+        elif self.action == "check":
+            if add_location_check(self.server, self.location_name, self.user_id):
+                notice = f"Отметка сохранена: {self.location_name}"
+            else:
+                notice = f"Для {self.location_name} уже подтверждён торговец."
+        else:
+            coords = get_location_coords(self.location_name)
+            if not coords:
+                notice = f"Не удалось найти координаты: {self.location_name}"
+            else:
+                is_first = add_trader_report(
+                    self.server, self.location_name, coords[0], coords[1], self.user_id
+                )
+                notice = (
+                    f"Торговец подтверждён: {self.location_name}"
+                    if is_first
+                    else f"Сообщение о торговце обновлено: {self.location_name}"
+                )
+        await self.view.render(interaction, notice)
+
+
+class LocationStatusV2View(discord.ui.LayoutView):
+    """Compact search layout based on Test 3, with real location actions."""
+
+    PAGE_SIZE = 7
+
+    def __init__(self, user_id: int, server: str, page: int = 0, notice: str | None = None):
         super().__init__(timeout=300)
-        locations = get_all_locations()[:5]
-        self.add_item(
-            discord.ui.TextDisplay(
-                "# Тест 1 · Карточки\n5 точек с изображением и двумя действиями."
-            )
-        )
-        for index, location in enumerate(locations):
-            card = discord.ui.Container()
-            accessory = (
-                discord.ui.Thumbnail(
-                    f"attachment://{attachment_names[location]}", description=location
-                )
-                if location in attachment_names
-                else TestActionButton("Нет фото")
-            )
-            card.add_item(
-                discord.ui.Section(
-                    f"**{location}**\n{test_location_status(index)}",
-                    accessory=accessory,
-                )
-            )
-            card.add_item(
-                discord.ui.ActionRow(
-                    TestActionButton("Не найден", discord.ButtonStyle.success),
-                    TestActionButton("Нашёл", discord.ButtonStyle.primary),
-                )
-            )
-            self.add_item(card)
+        self.user_id = user_id
+        self.server = server
+        self.page = page
+        self.notice = notice
+        self._build_layout()
 
+    def _build_layout(self):
+        checks = {location: (checked_at, count) for location, checked_at, count in get_location_check_summary(self.server)}
+        reports = {location: count for report_server, location, _x, _y, count in get_trader_report_summary() if report_server == self.server}
+        locations = get_all_locations()
+        pages = max(1, (len(locations) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self.page = max(0, min(self.page, pages - 1))
+        page_locations = locations[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
+        checked_count = sum(1 for location in locations if location in checks and location not in reports)
+        user_checks = get_user_checked_locations(self.server, self.user_id)
+        header = f"# Поиск · {self.server}\nПроверено: **{checked_count}/{len(locations)}** · Страница {self.page + 1}/{pages}"
+        container = discord.ui.Container(discord.ui.TextDisplay(header))
+        if self.notice:
+            container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
 
-def build_test_cards_v2_view() -> tuple[TestCardsV2View, list[discord.File]]:
-    """Build Test 1 and attach every thumbnail referenced by its layout."""
-    attachment_names = {}
-    files = []
-    for index, location in enumerate(get_all_locations()[:5]):
-        screenshot = get_screenshot_path(location)
-        if not screenshot:
-            continue
-        filename = f"test-card-{index}.png"
-        attachment_names[location] = filename
-        files.append(discord.File(screenshot, filename=filename))
-    return TestCardsV2View(attachment_names), files
-
-
-class TestInlineV2View(discord.ui.LayoutView):
-    """Test 2: nine dense rows, one inline action, and a photo picker."""
-
-    def __init__(self):
-        super().__init__(timeout=300)
-        locations = get_all_locations()[:9]
-        container = discord.ui.Container(
-            discord.ui.TextDisplay(
-                "# Тест 2 · Плотные строки\n9 точек, кнопка действия справа; фото открывается через список."
-            )
-        )
-        for index, location in enumerate(locations):
-            container.add_item(
-                discord.ui.Section(
-                    f"**{location}**\n{test_location_status(index)}",
-                    accessory=TestActionButton("Не найден", discord.ButtonStyle.success),
-                )
-            )
-        container.add_item(discord.ui.ActionRow(TestPhotoSelect(locations)))
-        self.add_item(container)
-
-
-class TestActionsV2View(discord.ui.LayoutView):
-    """Test 3: compact rows with two actions and no thumbnails."""
-
-    def __init__(self):
-        super().__init__(timeout=300)
-        container = discord.ui.Container(
-            discord.ui.TextDisplay(
-                "# Тест 3 · Два действия\n7 компактных строк без изображений."
-            )
-        )
-        for index, location in enumerate(get_all_locations()[:7]):
-            container.add_item(
-                discord.ui.TextDisplay(f"**{location}**\n{test_location_status(index)}")
-            )
+        for location in page_locations:
+            if location in reports:
+                status = f"Торговец подтверждён · сообщений: {reports[location]}"
+            elif location in checks:
+                checked_at, count = checks[location]
+                people = "игрок" if count == 1 else "игрока" if 2 <= count <= 4 else "игроков"
+                status = f"Проверено {humanize_check_time(checked_at)} · {count} {people}"
+            else:
+                status = "Ещё не проверяли"
+            check_action = "cancel" if location in user_checks else "check"
+            container.add_item(discord.ui.TextDisplay(f"**{location}**\n{status}"))
             container.add_item(
                 discord.ui.ActionRow(
-                    TestActionButton("Не найден", discord.ButtonStyle.success),
-                    TestActionButton("Нашёл", discord.ButtonStyle.primary),
+                    LocationStatusActionButton(
+                        self.user_id, self.server, location, check_action, location in reports
+                    ),
+                    LocationStatusActionButton(self.user_id, self.server, location, "found"),
                 )
             )
+
+        container.add_item(discord.ui.ActionRow(LocationPhotoSelect(page_locations)))
+        container.add_item(
+            discord.ui.ActionRow(
+                self._navigation_button("Назад", -1, self.page <= 0),
+                self._refresh_button(),
+                self._navigation_button("Вперёд", 1, self.page >= pages - 1),
+            )
+        )
         self.add_item(container)
+
+    def _navigation_button(self, label: str, step: int, disabled: bool):
+        button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction):
+            await self.render(interaction, page=self.page + step)
+
+        button.callback = callback
+        return button
+
+    def _refresh_button(self):
+        button = discord.ui.Button(label="Обновить", style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction):
+            await self.render(interaction)
+
+        button.callback = callback
+        return button
+
+    async def render(self, interaction: discord.Interaction, notice: str | None = None, page: int | None = None):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            view=LocationStatusV2View(
+                self.user_id, self.server, self.page if page is None else page, notice
+            )
+        )
 
 
 async def start_location_status(interaction: discord.Interaction, show_progress: bool = False):
