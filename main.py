@@ -885,6 +885,18 @@ class LocationStatusActionButton(discord.ui.Button):
             else:
                 notice = f"Для {self.location_name} уже подтверждён торговец."
         else:
+            # A first report changes the shared status for everyone, so ask for
+            # an explicit confirmation before writing it to the database.
+            if not has_trader_report_for_server(self.server, self.location_name):
+                await interaction.response.edit_message(
+                    view=TraderConfirmationView(
+                        self.user_id,
+                        self.server,
+                        self.location_name,
+                        return_page=self.view.page,
+                    )
+                )
+                return
             coords = get_location_coords(self.location_name)
             if not coords:
                 notice = f"Не удалось найти координаты: {self.location_name}"
@@ -898,6 +910,74 @@ class LocationStatusActionButton(discord.ui.Button):
                     else f"Сообщение о торговце обновлено: {self.location_name}"
                 )
         await self.view.render(interaction, notice)
+
+
+class TraderConfirmationView(discord.ui.LayoutView):
+    """Ask before creating a new public trader report."""
+
+    def __init__(
+        self, user_id: int, server: str, location_name: str, return_page: int
+    ):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.server = server
+        self.location_name = location_name
+        self.return_page = return_page
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay("# Подтвердить торговца")
+        )
+        container.add_item(
+            discord.ui.TextDisplay(
+                f"Торговец найден в **{location_name}** на сервере **{server}**?"
+            )
+        )
+        container.add_item(
+            discord.ui.TextDisplay(
+                "> После подтверждения отметка станет видна другим игрокам."
+            )
+        )
+
+        confirm_button = discord.ui.Button(
+            label="Да, подтвердить", style=discord.ButtonStyle.success
+        )
+        cancel_button = discord.ui.Button(
+            label="Отмена", style=discord.ButtonStyle.secondary
+        )
+        confirm_button.callback = self._confirm_callback
+        cancel_button.callback = self._cancel_callback
+        container.add_item(discord.ui.ActionRow(confirm_button, cancel_button))
+        self.add_item(container)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return False
+        return True
+
+    async def _confirm_callback(self, interaction: discord.Interaction):
+        coords = get_location_coords(self.location_name)
+        if not coords:
+            notice = f"Не удалось найти координаты: {self.location_name}"
+        else:
+            is_first = add_trader_report(
+                self.server, self.location_name, coords[0], coords[1], self.user_id
+            )
+            notice = (
+                f"Торговец подтверждён: {self.location_name}"
+                if is_first
+                else f"Сообщение о торговце обновлено: {self.location_name}"
+            )
+        await interaction.response.edit_message(
+            view=LocationStatusV2View(
+                self.user_id, self.server, self.return_page, notice
+            )
+        )
+
+    async def _cancel_callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            view=LocationStatusV2View(self.user_id, self.server, self.return_page)
+        )
 
 
 class LocationStatusV2View(discord.ui.LayoutView):
@@ -945,7 +1025,7 @@ class LocationStatusV2View(discord.ui.LayoutView):
             "checked": f"## ✅ Проверено, торговца нет · {len(checked_locations)}",
         }
         current_group = None
-        for group, location in page_locations:
+        for index, (group, location) in enumerate(page_locations):
             if group != current_group:
                 container.add_item(discord.ui.TextDisplay(group_titles[group]))
                 current_group = group
@@ -971,6 +1051,8 @@ class LocationStatusV2View(discord.ui.LayoutView):
                     ),
                 )
             container.add_item(actions)
+            if index < len(page_locations) - 1:
+                container.add_item(discord.ui.TextDisplay("────────────"))
 
         container.add_item(
             discord.ui.ActionRow(LocationPhotoSelect([location for _group, location in page_locations]))
