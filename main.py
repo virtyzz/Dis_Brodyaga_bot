@@ -271,47 +271,14 @@ async def show_help(interaction: discord.Interaction):
 
 
 async def show_trader_locations(interaction: discord.Interaction):
-    """Show a compact server overview before opening location details."""
-    summary = get_trader_report_summary()
-    counts = {server: 0 for server in SERVERS}
-    for server, _location, _x, _y, confirmations in summary:
-        counts[server] += confirmations
-
-    embed = discord.Embed(
-        title="📍 Где торговец?",
-        description="Выберите сервер для подробностей.",
-        color=discord.Color.gold(),
-    )
-    for server in SERVERS:
-        if counts[server]:
-            value = f"✅ Есть сообщения: {counts[server]}"
-        else:
-            value = "❔ Пока нет сообщений"
-        embed.add_field(name=server, value=value, inline=True)
-    await interaction.response.send_message(
-        embed=embed, view=TraderLocationServerSelectView(interaction.user.id), ephemeral=True
-    )
+    """Show current trader reports for all servers immediately."""
+    await show_trader_locations_detail(interaction)
 
 
-class TraderLocationServerSelectView(discord.ui.View):
-    def __init__(self, user_id: int):
-        super().__init__(timeout=300)
-        self.user_id = user_id
-        self.select_server.options = [
-            discord.SelectOption(label=server, value=server, emoji="🌐")
-            for server in SERVERS
-        ]
-
-    @discord.ui.select(placeholder="Выберите сервер...")
-    async def select_server(self, interaction: discord.Interaction, select: discord.ui.Select):
-        if interaction.user.id != self.user_id:
-            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
-            return
-        await show_trader_locations_detail(interaction, select.values[0])
-
-
-async def show_trader_locations_detail(interaction: discord.Interaction, selected_server: str):
-    """Show reports for one selected server, with screenshots when available."""
+async def show_trader_locations_detail(
+    interaction: discord.Interaction, selected_server: str | None = None
+):
+    """Show reports for one server or, by default, all servers."""
     reports = get_trader_reports()
 
     if not reports:
@@ -333,9 +300,9 @@ async def show_trader_locations_detail(interaction: discord.Interaction, selecte
         if username not in reports_grouped[server][location_name]["users"]:
             reports_grouped[server][location_name]["users"].append(username)
 
-    # Один выбранный сервер — без серии ephemeral-сообщений.
+    servers_to_show = [selected_server] if selected_server else SERVERS
     first_server = True
-    for server in [selected_server]:
+    for server in servers_to_show:
         if server in reports_grouped:
             embed = discord.Embed(
                 title=f"📍 {server}",
