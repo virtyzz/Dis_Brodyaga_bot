@@ -983,7 +983,10 @@ class TraderConfirmationView(discord.ui.LayoutView):
 class LocationStatusV2View(discord.ui.LayoutView):
     """Compact search layout based on Test 3, with real location actions."""
 
-    PAGE_SIZE = 7
+    # Components V2 permits at most 40 nested components per message. Five
+    # points leave room for their actions, group headers, navigation, and the
+    # visual separators between points.
+    PAGE_SIZE = 5
 
     def __init__(self, user_id: int, server: str, page: int = 0, notice: str | None = None):
         super().__init__(timeout=300)
