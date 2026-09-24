@@ -1055,7 +1055,9 @@ class LocationStatusV2View(discord.ui.LayoutView):
                 )
             container.add_item(actions)
             if index < len(page_locations) - 1:
-                container.add_item(discord.ui.TextDisplay("────────────"))
+                container.add_item(
+                    discord.ui.Separator(spacing=discord.SeparatorSpacing.small)
+                )
 
         container.add_item(
             discord.ui.ActionRow(LocationPhotoSelect([location for _group, location in page_locations]))
