@@ -215,12 +215,12 @@ class MainMenuV2View(discord.ui.LayoutView):
             custom_id="main_menu_check_trader",
         )
         help_button = discord.ui.Button(
-            label="Как это работает",
+            label="Справка",
             style=discord.ButtonStyle.secondary,
             custom_id="main_menu_help",
         )
         share = discord.ui.Button(
-            label="Добавить или поделиться",
+            label="Пригласить",
             style=discord.ButtonStyle.secondary,
             custom_id="main_menu_share_bot",
         )
