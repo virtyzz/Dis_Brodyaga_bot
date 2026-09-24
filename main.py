@@ -211,19 +211,19 @@ class MainMenuView(discord.ui.View):
         ensure_user_registered(interaction.user)
         await start_location_status(interaction, show_progress=True)
 
-    @discord.ui.button(label="Где торговец?", style=discord.ButtonStyle.primary, custom_id="main_menu_check_trader", row=0)
-    async def check_trader(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        ensure_user_registered(interaction.user)
-        await show_trader_locations(interaction)
-
-    @discord.ui.button(label="Нашёл торговца", style=discord.ButtonStyle.success, custom_id="main_menu_report_trader", row=1)
+    @discord.ui.button(label="Нашел торговца", style=discord.ButtonStyle.success, custom_id="main_menu_report_trader", row=0)
     async def report_trader(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
         ensure_user_registered(interaction.user)
         await start_report_flow(interaction)
+
+    @discord.ui.button(label="Где торговец?", style=discord.ButtonStyle.primary, custom_id="main_menu_check_trader", row=1)
+    async def check_trader(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        ensure_user_registered(interaction.user)
+        await show_trader_locations(interaction)
 
     @discord.ui.button(label="Как это работает", style=discord.ButtonStyle.secondary, custom_id="main_menu_help", row=1)
     async def help_info(
@@ -231,7 +231,7 @@ class MainMenuView(discord.ui.View):
     ):
         await show_help(interaction)
 
-    @discord.ui.button(label="Добавить бота", style=discord.ButtonStyle.secondary, custom_id="main_menu_share_bot", row=2)
+    @discord.ui.button(label="Добавить бота себе или поделиться", style=discord.ButtonStyle.secondary, custom_id="main_menu_share_bot", row=2)
     async def share_bot(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
@@ -851,7 +851,7 @@ def build_location_status_embed(server: str, page: int = 0, notice: str | None =
         title=f"🗺️ Поиск / статус · {server}",
         description=(
             f"Проверено: **{checked_count}/{len(locations)}** · страница {page + 1}/{pages}\n"
-            "Кнопки ниже соответствуют локациям на этой странице."
+            "Зелёная кнопка — отметить «не найден», красная — отменить свою отметку."
         ),
         color=discord.Color.gold(),
     )
@@ -874,22 +874,29 @@ class LocationCheckActionButton(discord.ui.Button):
     """Toggle the current player's check for one visible location."""
 
     def __init__(
-        self, user_id: int, server: str, location_name: str, is_checked_by_user: bool, row: int
+        self, user_id: int, server: str, location_name: str,
+        is_checked_by_user: bool, is_trader_confirmed: bool, row: int,
     ):
         super().__init__(
-            label=(f"Отменить: {location_name}" if is_checked_by_user else f"Не найден: {location_name}"),
-            style=(discord.ButtonStyle.danger if is_checked_by_user else discord.ButtonStyle.secondary),
+            label=location_name,
+            style=(
+                discord.ButtonStyle.secondary if is_trader_confirmed
+                else discord.ButtonStyle.danger if is_checked_by_user
+                else discord.ButtonStyle.success
+            ),
+            disabled=is_trader_confirmed,
             row=row,
         )
         self.user_id = user_id
         self.server = server
         self.location_name = location_name
+        self.is_checked_by_user = is_checked_by_user
 
     async def callback(self, interaction: discord.Interaction):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
             return
-        if self.label.startswith("Отменить:"):
+        if self.is_checked_by_user:
             remove_location_check(self.server, self.location_name, self.user_id)
             self.view.notice = f"Отметка отменена: {self.location_name}"
         elif add_location_check(self.server, self.location_name, self.user_id):
@@ -917,16 +924,16 @@ class LocationStatusView(discord.ui.View):
         user_checks = get_user_checked_locations(server, user_id)
         locations = get_all_locations()[page * 9:(page + 1) * 9]
         for index, location in enumerate(locations):
-            if location not in reports:
-                self.add_item(
-                    LocationCheckActionButton(
-                        user_id,
-                        server,
-                        location,
-                        location in user_checks,
-                        row=1 + index // 5,
-                    )
+            self.add_item(
+                LocationCheckActionButton(
+                    user_id,
+                    server,
+                    location,
+                    location in user_checks,
+                    location in reports,
+                    row=1 + index // 3,
                 )
+            )
 
     async def _render(self, interaction: discord.Interaction):
         embed, self.page, pages = build_location_status_embed(
