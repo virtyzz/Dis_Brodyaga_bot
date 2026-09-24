@@ -489,6 +489,7 @@ async def start_search_flow(interaction: discord.Interaction):
 def build_search_overview_embed() -> discord.Embed:
     """Show search progress for every server where it is useful to players."""
     reports = {(server, location) for server, location, *_rest in get_trader_report_summary()}
+    trader_statuses = get_server_trader_statuses()
     total = len(get_all_locations())
     embed = discord.Embed(
         title="🔎 Начать поиск",
@@ -501,8 +502,39 @@ def build_search_overview_embed() -> discord.Embed:
             for location, _checked_at, _count in get_location_check_summary(server)
             if (server, location) not in reports
         )
-        embed.add_field(name=server, value=f"Проверено: **{checked}/{total} точек**", inline=True)
+        embed.add_field(
+            name=server,
+            value=f"{trader_statuses[server][0]}\nПроверено: **{checked}/{total} точек**",
+            inline=True,
+        )
     return embed
+
+
+def get_server_trader_statuses() -> dict[str, tuple[str, str]]:
+    """Build full and select-menu-friendly trader status text for every server."""
+    reports_by_server = {server: [] for server in SERVERS}
+    for server, location, _x, _y, confirmations in get_trader_report_summary():
+        reports_by_server[server].append((location, confirmations))
+
+    statuses = {}
+    for server, reports in reports_by_server.items():
+        if not reports:
+            statuses[server] = ("❔ Сообщений о торговце нет", "Нет сообщений о торговце")
+            continue
+        reports.sort(key=lambda item: (-item[1], item[0]))
+        leader, confirmations = reports[0]
+        leaders = [location for location, count in reports if count == confirmations]
+        if len(reports) == 1:
+            text = f"🕵️ Торговец: {leader} · {confirmations} сообщ."
+            description = f"Торговец: {leader} · {confirmations} сообщ."
+        elif len(leaders) > 1:
+            text = f"🕵️ Несколько лидирующих точек · {len(leaders)}"
+            description = f"Несколько лидирующих точек: {len(leaders)}"
+        else:
+            text = f"🕵️ Несколько точек · лидирует {leader}, {confirmations} сообщ."
+            description = f"Несколько точек; лидер: {leader}"
+        statuses[server] = (text, description)
+    return statuses
 
 
 class WithdrawCheckView(discord.ui.View):
@@ -983,10 +1015,19 @@ class LocationStatusV2View(discord.ui.LayoutView):
 
 
 async def start_location_status(interaction: discord.Interaction, show_progress: bool = False):
+    trader_statuses = get_server_trader_statuses()
     view = discord.ui.View(timeout=300)
     select = discord.ui.Select(
         placeholder="Выберите сервер...",
-        options=[discord.SelectOption(label=server, value=server, emoji="🌐") for server in SERVERS],
+        options=[
+            discord.SelectOption(
+                label=server,
+                value=server,
+                description=trader_statuses[server][1],
+                emoji="🌐",
+            )
+            for server in SERVERS
+        ],
     )
 
     async def select_server(select_interaction: discord.Interaction):
