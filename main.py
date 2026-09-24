@@ -245,7 +245,7 @@ class HelpInfoV2View(discord.ui.LayoutView):
         container = discord.ui.Container(
             discord.ui.TextDisplay("# ℹ️ Как это работает"),
             discord.ui.TextDisplay(
-                "Бот помогает отслеживать Бродячего торговца на четырёх серверах Chernarus."
+                "Бот помогает отслеживать Бродячего торговца на четырёх серверах Chernarus YourWorld PVE."
             ),
         )
         container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
