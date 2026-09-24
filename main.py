@@ -797,62 +797,21 @@ def humanize_check_time(value) -> str:
     return f"{hours} ч назад"
 
 
-def build_location_status_embed(server: str, page: int = 0, notice: str | None = None):
-    """Create one page of the server's public search status."""
-    checks = {
-        location: (checked_at, count)
-        for location, checked_at, count in get_location_check_summary(server)
-    }
-    reports = {
-        location: count
-        for report_server, location, _x, _y, count in get_trader_report_summary()
-        if report_server == server
-    }
-    locations = get_all_locations()
-    page_size = 9
-    pages = max(1, (len(locations) + page_size - 1) // page_size)
-    page = max(0, min(page, pages - 1))
-    checked_count = sum(1 for location in locations if location in checks and location not in reports)
-
-    embed = discord.Embed(
-        title=f"🗺️ Поиск / статус · {server}",
-        description=(
-            f"Проверено: **{checked_count}/{len(locations)}** · страница {page + 1}/{pages}\n"
-            "Зелёная кнопка — отметить «не найден», красная — отменить свою отметку."
-        ),
-        color=discord.Color.gold(),
-    )
-    for location in locations[page * page_size:(page + 1) * page_size]:
-        if location in reports:
-            value = f"📍 Торговец подтверждён · сообщений: {reports[location]}"
-        elif location in checks:
-            checked_at, count = checks[location]
-            people = "игрок" if count == 1 else "игрока" if 2 <= count <= 4 else "игроков"
-            value = f"✅ Проверено {humanize_check_time(checked_at)} · {count} {people}"
-        else:
-            value = "❔ Ещё не проверяли"
-        embed.add_field(name=location, value=value, inline=False)
-    if notice:
-        embed.set_footer(text=notice)
-    return embed, page, pages
-
-
-class LocationCheckActionButton(discord.ui.Button):
-    """Toggle the current player's check for one visible location."""
+class LocationCheckV2Button(discord.ui.Button):
+    """A right-side action button in one Components V2 location row."""
 
     def __init__(
         self, user_id: int, server: str, location_name: str,
-        is_checked_by_user: bool, is_trader_confirmed: bool, row: int,
+        is_checked_by_user: bool, is_trader_confirmed: bool,
     ):
         super().__init__(
-            label=location_name,
+            label=("Подтверждён" if is_trader_confirmed else "Отменить" if is_checked_by_user else "Не найден"),
             style=(
                 discord.ButtonStyle.secondary if is_trader_confirmed
                 else discord.ButtonStyle.danger if is_checked_by_user
                 else discord.ButtonStyle.success
             ),
             disabled=is_trader_confirmed,
-            row=row,
         )
         self.user_id = user_id
         self.server = server
@@ -865,70 +824,112 @@ class LocationCheckActionButton(discord.ui.Button):
             return
         if self.is_checked_by_user:
             remove_location_check(self.server, self.location_name, self.user_id)
-            self.view.notice = f"Отметка отменена: {self.location_name}"
+            notice = f"Отметка отменена: {self.location_name}"
         elif add_location_check(self.server, self.location_name, self.user_id):
-            self.view.notice = f"Отметка сохранена: {self.location_name}"
+            notice = f"Отметка сохранена: {self.location_name}"
         else:
-            self.view.notice = f"Для {self.location_name} уже подтверждён торговец."
-        await self.view._render(interaction)
+            notice = f"Для {self.location_name} уже подтверждён торговец."
+        await self.view.render(interaction, notice)
 
 
-class LocationStatusView(discord.ui.View):
-    def __init__(self, user_id: int, server: str, page: int = 0):
+class LocationStatusV2View(discord.ui.LayoutView):
+    """Components V2 layout: each location has text and an inline action."""
+
+    PAGE_SIZE = 9
+
+    def __init__(self, user_id: int, server: str, page: int = 0, notice: str | None = None):
         super().__init__(timeout=300)
         self.user_id = user_id
         self.server = server
         self.page = page
-        self.notice = None
-        _embed, _page, pages = build_location_status_embed(server, page)
-        self.previous.disabled = page <= 0
-        self.next.disabled = page >= pages - 1
-        reports = {
-            location
-            for report_server, location, _x, _y, _count in get_trader_report_summary()
-            if report_server == server
+        self.notice = notice
+        self._build_layout()
+
+    def _build_layout(self):
+        checks = {
+            location: (checked_at, count)
+            for location, checked_at, count in get_location_check_summary(self.server)
         }
-        user_checks = get_user_checked_locations(server, user_id)
-        locations = get_all_locations()[page * 9:(page + 1) * 9]
-        for index, location in enumerate(locations):
-            self.add_item(
-                LocationCheckActionButton(
-                    user_id,
-                    server,
-                    location,
-                    location in user_checks,
-                    location in reports,
-                    row=1 + index // 3,
-                )
+        reports = {
+            location: count
+            for report_server, location, _x, _y, count in get_trader_report_summary()
+            if report_server == self.server
+        }
+        locations = get_all_locations()
+        pages = max(1, (len(locations) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self.page = max(0, min(self.page, pages - 1))
+        checked_count = sum(
+            1 for location in locations if location in checks and location not in reports
+        )
+        user_checks = get_user_checked_locations(self.server, self.user_id)
+
+        header = (
+            f"# Поиск · {self.server}\n"
+            f"Проверено: **{checked_count}/{len(locations)}** · Страница {self.page + 1}/{pages}\n"
+            "Зелёная кнопка — отметить «не найден», красная — отменить свою отметку."
+        )
+        container = discord.ui.Container(discord.ui.TextDisplay(header))
+        if self.notice:
+            container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
+        container.add_item(discord.ui.Separator())
+
+        for location in locations[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]:
+            if location in reports:
+                status = f"Торговец подтверждён · сообщений: {reports[location]}"
+            elif location in checks:
+                checked_at, count = checks[location]
+                people = "игрок" if count == 1 else "игрока" if 2 <= count <= 4 else "игроков"
+                status = f"Проверено {humanize_check_time(checked_at)} · {count} {people}"
+            else:
+                status = "Ещё не проверяли"
+            button = LocationCheckV2Button(
+                self.user_id,
+                self.server,
+                location,
+                location in user_checks,
+                location in reports,
+            )
+            container.add_item(
+                discord.ui.Section(f"**{location}**\n{status}", accessory=button)
             )
 
-    async def _render(self, interaction: discord.Interaction):
-        embed, self.page, pages = build_location_status_embed(
-            self.server, self.page, self.notice
+        navigation = discord.ui.ActionRow(
+            self._navigation_button("Назад", -1, self.page <= 0),
+            self._refresh_button(),
+            self._navigation_button("Вперёд", 1, self.page >= pages - 1),
         )
-        refreshed_view = LocationStatusView(self.user_id, self.server, self.page)
-        refreshed_view.notice = self.notice
-        await interaction.response.edit_message(embed=embed, view=refreshed_view)
+        container.add_item(navigation)
+        self.add_item(container)
 
-    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+    def _navigation_button(self, label: str, step: int, disabled: bool):
+        button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, disabled=disabled)
+
+        async def callback(interaction: discord.Interaction):
+            await self.render(interaction, page=self.page + step)
+
+        button.callback = callback
+        return button
+
+    def _refresh_button(self):
+        button = discord.ui.Button(label="Обновить", style=discord.ButtonStyle.primary)
+
+        async def callback(interaction: discord.Interaction):
+            await self.render(interaction)
+
+        button.callback = callback
+        return button
+
+    async def render(self, interaction: discord.Interaction, notice: str | None = None, page: int | None = None):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
-            return False
-        return True
-
-    @discord.ui.button(label="Назад", style=discord.ButtonStyle.secondary)
-    async def previous(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        self.page -= 1
-        await self._render(interaction)
-
-    @discord.ui.button(label="Обновить", style=discord.ButtonStyle.primary)
-    async def refresh(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        await self._render(interaction)
-
-    @discord.ui.button(label="Вперёд", style=discord.ButtonStyle.secondary)
-    async def next(self, interaction: discord.Interaction, _button: discord.ui.Button):
-        self.page += 1
-        await self._render(interaction)
+            return
+        next_view = LocationStatusV2View(
+            self.user_id,
+            self.server,
+            self.page if page is None else page,
+            notice,
+        )
+        await interaction.response.edit_message(view=next_view)
 
 
 async def start_location_status(interaction: discord.Interaction, show_progress: bool = False):
@@ -943,9 +944,10 @@ async def start_location_status(interaction: discord.Interaction, show_progress:
             await select_interaction.response.send_message("Это не ваше меню.", ephemeral=True)
             return
         server = select.values[0]
-        embed, page, _pages = build_location_status_embed(server)
         await select_interaction.response.edit_message(
-            embed=embed, view=LocationStatusView(interaction.user.id, server, page)
+            content=None,
+            embed=None,
+            view=LocationStatusV2View(interaction.user.id, server),
         )
 
     select.callback = select_server
