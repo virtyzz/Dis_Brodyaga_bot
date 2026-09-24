@@ -1456,49 +1456,81 @@ class LocationStatusV2View(discord.ui.LayoutView):
         )
 
 
+class SearchServerSelectV2View(discord.ui.LayoutView):
+    """Components V2 entry screen for choosing a server before a search."""
+
+    def __init__(self, user_id: int, show_progress: bool = False):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.show_progress = show_progress
+        self._build_layout()
+
+    def _build_layout(self):
+        trader_statuses = get_server_trader_statuses()
+        container = discord.ui.Container(
+            discord.ui.TextDisplay("# 🔎 Начать поиск" if self.show_progress else "# 🗺️ Поиск / статус"),
+            discord.ui.TextDisplay(
+                "Выберите сервер, чтобы увидеть проверенные локации и отметить новую проверку."
+            ),
+        )
+
+        if self.show_progress:
+            reports = {
+                (server, location)
+                for server, location, *_rest in get_trader_report_summary()
+            }
+            total = len(get_all_locations())
+            for server in SERVERS:
+                checked = sum(
+                    1
+                    for location, _checked_at, _count in get_location_check_summary(server)
+                    if (server, location) not in reports
+                )
+                trader_text, _select_description = trader_statuses[server]
+                status = f"Проверено: **{checked}/{total} точек**"
+                if trader_text:
+                    status = f"{trader_text}\n{status}"
+                container.add_item(
+                    discord.ui.TextDisplay(
+                        f"**{get_server_display_name(server)}**\n{status}"
+                    )
+                )
+
+        select = discord.ui.Select(
+            placeholder="Выберите сервер...",
+            options=[
+                discord.SelectOption(
+                    label=get_server_display_name(server),
+                    value=server,
+                    description=trader_statuses[server][1],
+                    emoji="🌍",
+                )
+                if trader_statuses[server][1]
+                else discord.SelectOption(
+                    label=get_server_display_name(server), value=server, emoji="🌍"
+                )
+                for server in SERVERS
+            ],
+        )
+
+        async def select_server(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+                return
+            await interaction.response.edit_message(
+                view=LocationStatusV2View(self.user_id, select.values[0])
+            )
+
+        select.callback = select_server
+        container.add_item(discord.ui.ActionRow(select))
+        self.add_item(container)
+
+
 async def start_location_status(interaction: discord.Interaction, show_progress: bool = False):
-    trader_statuses = get_server_trader_statuses()
-    view = discord.ui.View(timeout=300)
-    select = discord.ui.Select(
-        placeholder="Выберите сервер...",
-        options=[
-            discord.SelectOption(
-                label=get_server_display_name(server),
-                value=server,
-                description=trader_statuses[server][1],
-                emoji="🌐",
-            )
-            if trader_statuses[server][1]
-            else discord.SelectOption(
-                label=get_server_display_name(server), value=server, emoji="🌐"
-            )
-            for server in SERVERS
-        ],
+    await interaction.response.send_message(
+        view=SearchServerSelectV2View(interaction.user.id, show_progress),
+        ephemeral=True,
     )
-
-    async def select_server(select_interaction: discord.Interaction):
-        if select_interaction.user.id != interaction.user.id:
-            await select_interaction.response.send_message("Это не ваше меню.", ephemeral=True)
-            return
-        server = select.values[0]
-        await select_interaction.response.edit_message(
-            content=None,
-            embed=None,
-            view=LocationStatusV2View(interaction.user.id, server),
-        )
-
-    select.callback = select_server
-    view.add_item(select)
-    if show_progress:
-        embed = build_search_overview_embed()
-    else:
-        embed = discord.Embed(
-            title="🗺️ Поиск / статус",
-            description="Выберите сервер, чтобы увидеть проверенные локации.",
-            color=discord.Color.gold(),
-        )
-    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
-
 
 # Обработка ошибок
 @bot.event
