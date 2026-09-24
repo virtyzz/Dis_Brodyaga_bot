@@ -28,6 +28,7 @@ from coords_handler import (
     get_unique_base_locations,
     get_locations_by_base,
     SERVERS,
+    get_server_display_name,
 )
 
 # Загрузка токена из переменных окружения или файла .env
@@ -120,7 +121,7 @@ async def on_message(message):
         is_first = add_trader_report(server, location_name, x, y, message.author.id)
         status = "Вы первый сообщили" if is_first else "Ваше сообщение обновлено"
         await message.reply(
-            f"✅ {status}: `{location_name}` на сервере `{server}`.\n"
+            f"✅ {status}: `{location_name}` на сервере `{get_server_display_name(server)}`.\n"
             f"Координаты: X: {x}, Y: {y}"
         )
         return
@@ -242,7 +243,7 @@ async def show_help(interaction: discord.Interaction):
         )
         embed.add_field(
             name="📍 Где торговец?",
-            value="Показывает текущие сообщения о местоположении торговца на всех серверах (cherno-1, cherno-2, cherno-3, cherno-4).",
+            value="Показывает текущие сообщения о местоположении торговца на всех серверах Chernarus.",
             inline=False,
         )
         embed.add_field(
@@ -300,7 +301,7 @@ async def show_trader_locations_detail(
     for server in servers_to_show:
         if server in reports_grouped:
             embed = discord.Embed(
-                title=f"📍 {server}",
+                title=f"📍 {get_server_display_name(server)}",
                 color=discord.Color.green(),
             )
 
@@ -378,7 +379,7 @@ async def show_trader_locations_detail(
                     await interaction.followup.send(embed=embed, ephemeral=True)
         else:
             embed = discord.Embed(
-                title=f"📍 {server}",
+                title=f"📍 {get_server_display_name(server)}",
                 description="Нет данных о торговце на этом сервере.",
                 color=discord.Color.orange(),
             )
@@ -467,7 +468,8 @@ class TraderReportConfirmationView(discord.ui.LayoutView):
         )
         container.add_item(
             discord.ui.TextDisplay(
-                f"Подтвердить торговца в **{location_name}** на сервере **{server}**?"
+                f"Подтвердить торговца в **{location_name}** на сервере "
+                f"**{get_server_display_name(server)}**?"
             )
         )
         container.add_item(
@@ -548,7 +550,7 @@ class TraderLocationsV2View(discord.ui.LayoutView):
         ]
         options.extend(
             discord.SelectOption(
-                label=server, value=server, emoji="🌐",
+                label=get_server_display_name(server), value=server, emoji="🌐",
                 default=server == self.selected_server,
             )
             for server in SERVERS
@@ -574,7 +576,9 @@ class TraderLocationsV2View(discord.ui.LayoutView):
 
         servers_to_show = [self.selected_server] if self.selected_server else SERVERS
         for index, server in enumerate(servers_to_show):
-            container.add_item(discord.ui.TextDisplay(f"## {server}"))
+            container.add_item(
+                discord.ui.TextDisplay(f"## {get_server_display_name(server)}")
+            )
             container.add_item(
                 discord.ui.TextDisplay(format_trader_server_status(reports[server]))
             )
@@ -677,7 +681,9 @@ class ServerSelectView(discord.ui.View):
     @discord.ui.select(
         placeholder="Выберите сервер...",
         options=[
-            discord.SelectOption(label=server, value=server, emoji="🌐")
+            discord.SelectOption(
+                label=get_server_display_name(server), value=server, emoji="🌐"
+            )
             for server in SERVERS
         ],
     )
@@ -712,7 +718,10 @@ class ServerSelectView(discord.ui.View):
         action = "🔎 Проверить локацию" if flow == "search" else "📢 Нашёл торговца"
         embed = discord.Embed(
             title=action,
-            description=f"**Шаг 2/3:** Выберите локацию на сервере `{server}`:",
+            description=(
+                f"**Шаг 2/3:** Выберите локацию на сервере "
+                f"`{get_server_display_name(server)}`:"
+            ),
             color=discord.Color.green(),
         )
 
@@ -756,7 +765,7 @@ def build_search_overview_embed() -> discord.Embed:
         if trader_text:
             value = f"{trader_text}\n{value}"
         embed.add_field(
-            name=server,
+            name=get_server_display_name(server),
             value=value,
             # Discord раскладывает inline-поля в колонки. Статус сервера
             # должен быть отдельным читаемым блоком, а не частью таблицы.
@@ -827,7 +836,7 @@ async def process_location_check(interaction: discord.Interaction, location_name
         embed = discord.Embed(
             title="✅ Локация отмечена",
             description=(
-                f"В `{location_name}` на сервере `{server}` торговца не нашли. "
+                f"В `{location_name}` на сервере `{get_server_display_name(server)}` торговца не нашли. "
                 "Отметка попадёт в общую сводку поиска."
             ),
             color=discord.Color.green(),
@@ -837,7 +846,7 @@ async def process_location_check(interaction: discord.Interaction, location_name
         embed = discord.Embed(
             title="📍 Торговец уже подтверждён",
             description=(
-                f"Для `{location_name}` на сервере `{server}` уже есть сообщение о торговце, "
+                f"Для `{location_name}` на сервере `{get_server_display_name(server)}` уже есть сообщение о торговце, "
                 "поэтому отметка «не найден» не сохранена."
             ),
             color=discord.Color.orange(),
@@ -1040,13 +1049,19 @@ async def process_report(interaction: discord.Interaction, location_name: str):
     if is_first:
         embed = discord.Embed(
             title="✅ Спасибо!",
-            description=f"Вы **первый** сообщили о торговце в локации `{location_name}` на сервере `{server}`!",
+            description=(
+                f"Вы **первый** сообщили о торговце в локации `{location_name}` "
+                f"на сервере `{get_server_display_name(server)}`!"
+            ),
             color=discord.Color.green(),
         )
     else:
         embed = discord.Embed(
             title="✅ Данные обновлены!",
-            description=f"Ваше сообщение о торговце в локации `{location_name}` на сервере `{server}` обновлено!",
+            description=(
+                f"Ваше сообщение о торговце в локации `{location_name}` "
+                f"на сервере `{get_server_display_name(server)}` обновлено!"
+            ),
             color=discord.Color.blue(),
         )
 
@@ -1185,7 +1200,8 @@ class TraderConfirmationView(discord.ui.LayoutView):
         )
         container.add_item(
             discord.ui.TextDisplay(
-                f"Торговец найден в **{location_name}** на сервере **{server}**?"
+                f"Торговец найден в **{location_name}** на сервере "
+                f"**{get_server_display_name(server)}**?"
             )
         )
         container.add_item(
@@ -1273,7 +1289,11 @@ class LocationStatusV2View(discord.ui.LayoutView):
         page_locations = ordered_locations[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
         checked_count = len(checked_locations)
         user_checks = get_user_checked_locations(self.server, self.user_id)
-        header = f"# Поиск · {self.server}\nПроверено: **{checked_count}/{len(locations)}** · Страница {self.page + 1}/{pages}"
+        header = (
+            f"# Поиск · {get_server_display_name(self.server)}\n"
+            f"Проверено: **{checked_count}/{len(locations)}** · "
+            f"Страница {self.page + 1}/{pages}"
+        )
         container = discord.ui.Container(discord.ui.TextDisplay(header))
         if self.notice:
             container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
@@ -1363,13 +1383,15 @@ async def start_location_status(interaction: discord.Interaction, show_progress:
         placeholder="Выберите сервер...",
         options=[
             discord.SelectOption(
-                label=server,
+                label=get_server_display_name(server),
                 value=server,
                 description=trader_statuses[server][1],
                 emoji="🌐",
             )
             if trader_statuses[server][1]
-            else discord.SelectOption(label=server, value=server, emoji="🌐")
+            else discord.SelectOption(
+                label=get_server_display_name(server), value=server, emoji="🌐"
+            )
             for server in SERVERS
         ],
     )

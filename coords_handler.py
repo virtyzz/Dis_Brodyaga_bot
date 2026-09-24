@@ -99,3 +99,17 @@ def get_location_groups() -> Dict[str, List[str]]:
 
 
 SERVERS = ["cherno-1", "cherno-2", "cherno-3", "cherno-4"]
+
+# Stable identifiers used by the database and API stay separate from the
+# names shown to players in Discord.
+SERVER_DISPLAY_NAMES = {
+    "cherno-1": "Chernarus 1",
+    "cherno-2": "Chernarus 2",
+    "cherno-3": "Chernarus 3",
+    "cherno-4": "Chernarus 4",
+}
+
+
+def get_server_display_name(server: str) -> str:
+    """Return the player-facing name while preserving unknown server IDs."""
+    return SERVER_DISPLAY_NAMES.get(server, server)
