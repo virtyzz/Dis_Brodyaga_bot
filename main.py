@@ -236,33 +236,46 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
+class HelpInfoV2View(discord.ui.LayoutView):
+    """Compact Components V2 help screen shown from the main menu."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay("# ℹ️ Как это работает"),
+            discord.ui.TextDisplay(
+                "Бот помогает отслеживать Бродячего торговца на четырёх серверах Chernarus."
+            ),
+        )
+        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        container.add_item(
+            discord.ui.TextDisplay(
+                "**🕵️ Где торговец?**\n"
+                "Показывает подтверждённые находки сразу по всем серверам: "
+                "локацию, ник игрока, который её отметил, и время сообщения."
+            )
+        )
+        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        container.add_item(
+            discord.ui.TextDisplay(
+                "**🔎 Начать поиск**\n"
+                "Выберите сервер и проверяйте локации. Для каждой точки можно отметить: "
+                "торговец не найден или найден. Перед отправкой находки бот попросит подтверждение."
+            )
+        )
+        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
+        container.add_item(
+            discord.ui.TextDisplay(
+                "**🔄 Обновление данных**\n"
+                "Поиски и сообщения сбрасываются ежедневно в 00:00 по московскому времени."
+            )
+        )
+        self.add_item(container)
+
+
 async def show_help(interaction: discord.Interaction):
-        embed = discord.Embed(
-            title="ℹ️ Помощь",
-            description="**Бот Бродячий Торговец** помогает отслеживать местоположение бродячего торговца в DayZ.",
-            color=discord.Color.blue(),
-        )
-        embed.add_field(
-            name="📍 Где торговец?",
-            value="Показывает текущие сообщения о местоположении торговца на всех серверах Chernarus.",
-            inline=False,
-        )
-        embed.add_field(
-            name="🔎 Начать поиск",
-            value="Позволяет отметить локацию, где торговца не нашли, и посмотреть общую сводку проверок.",
-            inline=False,
-        )
-        embed.add_field(
-            name="🕵️ Нашёл торговца",
-            value="В разделе «Начать поиск» нажмите «Нашёл» рядом с нужной локацией.",
-            inline=False,
-        )
-        embed.add_field(
-            name="🔄 Обновление данных",
-            value="Данные сбрасываются ежедневно в 00:00 по московскому времени.",
-            inline=False,
-        )
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    await interaction.response.send_message(view=HelpInfoV2View(), ephemeral=True)
 
 
 async def show_trader_locations(interaction: discord.Interaction):
