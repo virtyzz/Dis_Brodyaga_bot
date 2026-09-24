@@ -482,9 +482,7 @@ class TraderLocationMapSelect(discord.ui.Select):
                 label="Открыть на карте", style=discord.ButtonStyle.link, url=map_url
             )
         )
-        await interaction.response.send_message(
-            f"🕵️ {location_name}", view=view, ephemeral=True
-        )
+        await interaction.response.send_message(location_name, view=view, ephemeral=True)
 
 
 class TraderLocationPhotoButton(discord.ui.Button):
@@ -634,7 +632,7 @@ class TraderLocationsV2View(discord.ui.LayoutView):
         for index, (card_type, server, location_name, data) in enumerate(visible_cards):
             server_name = get_server_display_name(server)
             if card_type == "empty":
-                content = f"## {server_name}\n❔ Сообщений о торговце пока нет."
+                content = f"## {server_name}\nСообщений о торговце пока нет."
             else:
                 location_data, conflicting = data
                 users = [escape_markdown(username) for username in location_data["users"]]
@@ -644,12 +642,12 @@ class TraderLocationsV2View(discord.ui.LayoutView):
                     "подтверждение" if confirmations == 1
                     else "подтверждения" if confirmations < 5 else "подтверждений"
                 )
-                conflict_notice = "\n⚠️ Сообщения расходятся" if conflicting else ""
+                conflict_notice = "\nСообщения расходятся" if conflicting else ""
                 content = (
                     f"## {server_name}\n"
-                    f"🕵️ **{location_name}** · {confirmations} {word}{conflict_notice}\n"
-                    f"📍 X: {location_data['x']}, Y: {location_data['y']}\n"
-                    f"👥 Сообщили: {users_text}"
+                    f"**{location_name}** · {confirmations} {word}{conflict_notice}\n"
+                    f"X: {location_data['x']}, Y: {location_data['y']}\n"
+                    f"Сообщили: {users_text}"
                 )
             container.add_item(discord.ui.TextDisplay(content))
 
