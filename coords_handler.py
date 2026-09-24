@@ -113,3 +113,21 @@ SERVER_DISPLAY_NAMES = {
 def get_server_display_name(server: str) -> str:
     """Return the player-facing name while preserving unknown server IDs."""
     return SERVER_DISPLAY_NAMES.get(server, server)
+
+
+def get_brodyaga_map_url(location_name: str) -> Optional[str]:
+    """Build a DayZ-Map URL that opens the exact trader marker popup."""
+    locations = get_all_locations()
+    try:
+        location_id = locations.index(location_name) + 1
+    except ValueError:
+        return None
+
+    coords = get_location_coords(location_name)
+    if not coords:
+        return None
+    x, y = coords
+    return (
+        "https://dayz-map.ru/"
+        f"?brodyaga=1&brodyaga_location={location_id}&x={x}&y={y}"
+    )

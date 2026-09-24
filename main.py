@@ -29,6 +29,7 @@ from coords_handler import (
     get_locations_by_base,
     SERVERS,
     get_server_display_name,
+    get_brodyaga_map_url,
 )
 
 # Загрузка токена из переменных окружения или файла .env
@@ -454,6 +455,38 @@ class TraderLocationConfirmSelect(discord.ui.Select):
         )
 
 
+class TraderLocationMapSelect(discord.ui.Select):
+    """Offer exact DayZ-Map links for the reported locations of one server."""
+
+    def __init__(self, user_id: int, locations: list[str]):
+        self.user_id = user_id
+        super().__init__(
+            placeholder="Открыть точку на карте...",
+            options=[discord.SelectOption(label=location, value=location) for location in locations],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return
+        location_name = self.values[0]
+        map_url = get_brodyaga_map_url(location_name)
+        if not map_url:
+            await interaction.response.send_message(
+                f"Не удалось подготовить ссылку на карту: {location_name}.", ephemeral=True
+            )
+            return
+        view = discord.ui.View(timeout=300)
+        view.add_item(
+            discord.ui.Button(
+                label="Открыть на карте", style=discord.ButtonStyle.link, url=map_url
+            )
+        )
+        await interaction.response.send_message(
+            f"🕵️ {location_name}", view=view, ephemeral=True
+        )
+
+
 class TraderReportConfirmationView(discord.ui.LayoutView):
     """Confirmation before a report is added from the public status screen."""
 
@@ -594,6 +627,11 @@ class TraderLocationsV2View(discord.ui.LayoutView):
             visible_locations = locations[self.location_page * 25:(self.location_page + 1) * 25]
             container.add_item(
                 discord.ui.ActionRow(LocationPhotoSelect(visible_locations))
+            )
+            container.add_item(
+                discord.ui.ActionRow(
+                    TraderLocationMapSelect(self.user_id, visible_locations)
+                )
             )
             container.add_item(
                 discord.ui.ActionRow(
@@ -1318,9 +1356,17 @@ class LocationStatusV2View(discord.ui.LayoutView):
                 status = "Ещё не проверяли"
             container.add_item(discord.ui.TextDisplay(f"**{location}**\n{status}"))
             if group == "found":
-                actions = discord.ui.ActionRow(
+                found_actions = [
                     LocationStatusActionButton(self.user_id, self.server, location, "found")
-                )
+                ]
+                map_url = get_brodyaga_map_url(location)
+                if map_url:
+                    found_actions.append(
+                        discord.ui.Button(
+                            label="На карте", style=discord.ButtonStyle.link, url=map_url
+                        )
+                    )
+                actions = discord.ui.ActionRow(*found_actions)
             else:
                 check_action = "cancel" if location in user_checks else "check"
                 actions = discord.ui.ActionRow(
