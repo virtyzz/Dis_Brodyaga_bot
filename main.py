@@ -144,7 +144,7 @@ async def on_ready():
     print("Задача ежедневного архивирования запущена")
 
     # Регистрация persistent views (работают после перезапуска)
-    bot.add_view(MainMenuView())
+    bot.add_view(MainMenuV2View())
     print("Persistent views зарегистрированы")
 
 
@@ -185,70 +185,9 @@ def ensure_user_registered(user: discord.User) -> bool:
 
 
 async def send_main_menu(interaction: discord.Interaction):
-    """Отправка главного меню с кнопками"""
+    """Send the persistent Components V2 main menu."""
     ensure_user_registered(interaction.user)
-    await interaction.response.send_message(embed=build_main_menu_embed(), view=MainMenuView())
-
-
-def build_main_menu_embed() -> discord.Embed:
-    """Build the stable main menu; live search figures belong to the search view."""
-    embed = discord.Embed(
-        title="🕵️ Бродячий торговец",
-        description="Выберите действие:",
-        color=discord.Color.gold(),
-    )
-    return embed
-
-
-class MainMenuView(discord.ui.View):
-    """Главное меню с кнопками (persistent — работает после перезапуска)"""
-
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @discord.ui.button(label="Начать поиск", style=discord.ButtonStyle.success, custom_id="main_menu_start_search", row=0)
-    async def start_search(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        ensure_user_registered(interaction.user)
-        await start_location_status(interaction, show_progress=True)
-
-    @discord.ui.button(label="Где торговец?", style=discord.ButtonStyle.primary, custom_id="main_menu_check_trader", row=0)
-    async def check_trader(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        ensure_user_registered(interaction.user)
-        await show_trader_locations(interaction)
-
-    @discord.ui.button(label="Как это работает", style=discord.ButtonStyle.secondary, custom_id="main_menu_help", row=1)
-    async def help_info(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await show_help(interaction)
-
-    @discord.ui.button(label="Добавить или поделиться", style=discord.ButtonStyle.secondary, custom_id="main_menu_share_bot", row=1)
-    async def share_bot(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await show_bot_invite(interaction)
-
-    @discord.ui.button(label="Вариант 1", style=discord.ButtonStyle.secondary, custom_id="main_menu_preview_1", row=2)
-    async def preview_variant_1(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await show_main_menu_preview(interaction, 1)
-
-    @discord.ui.button(label="Вариант 2", style=discord.ButtonStyle.secondary, custom_id="main_menu_preview_2", row=2)
-    async def preview_variant_2(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await show_main_menu_preview(interaction, 2)
-
-    @discord.ui.button(label="Вариант 3", style=discord.ButtonStyle.secondary, custom_id="main_menu_preview_3", row=2)
-    async def preview_variant_3(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await show_main_menu_preview(interaction, 3)
+    await interaction.response.send_message(view=MainMenuV2View())
 
 
 async def show_bot_invite(interaction: discord.Interaction):
@@ -259,76 +198,57 @@ async def show_bot_invite(interaction: discord.Interaction):
     )
 
 
-class MainMenuPreviewV2View(discord.ui.LayoutView):
-    """Interactive V2 mock-up of one prospective main-menu layout."""
+class MainMenuV2View(discord.ui.LayoutView):
+    """Compact persistent Components V2 main menu."""
 
-    def __init__(self, user_id: int, variant: int):
-        super().__init__(timeout=300)
-        self.user_id = user_id
-        self.variant = variant
-        self._build_layout()
+    def __init__(self):
+        super().__init__(timeout=None)
 
-    def _action_button(self, label: str, style: discord.ButtonStyle, action: str):
-        button = discord.ui.Button(label=label, style=style)
+        search = discord.ui.Button(
+            label="Начать поиск",
+            style=discord.ButtonStyle.success,
+            custom_id="main_menu_start_search",
+        )
+        trader = discord.ui.Button(
+            label="Где торговец?",
+            style=discord.ButtonStyle.primary,
+            custom_id="main_menu_check_trader",
+        )
+        help_button = discord.ui.Button(
+            label="Как это работает",
+            style=discord.ButtonStyle.secondary,
+            custom_id="main_menu_help",
+        )
+        share = discord.ui.Button(
+            label="Добавить или поделиться",
+            style=discord.ButtonStyle.secondary,
+            custom_id="main_menu_share_bot",
+        )
 
-        async def callback(interaction: discord.Interaction):
-            if interaction.user.id != self.user_id:
-                await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
-                return
+        async def start_search(interaction: discord.Interaction):
             ensure_user_registered(interaction.user)
-            if action == "search":
-                await start_location_status(interaction, show_progress=True)
-            elif action == "trader":
-                await show_trader_locations(interaction)
-            elif action == "help":
-                await show_help(interaction)
-            else:
-                await show_bot_invite(interaction)
+            await start_location_status(interaction, show_progress=True)
 
-        button.callback = callback
-        return button
+        async def check_trader(interaction: discord.Interaction):
+            ensure_user_registered(interaction.user)
+            await show_trader_locations(interaction)
 
-    def _build_layout(self):
-        search = self._action_button("Начать поиск", discord.ButtonStyle.success, "search")
-        trader = self._action_button("Где торговец?", discord.ButtonStyle.primary, "trader")
-        help_button = self._action_button("Как это работает", discord.ButtonStyle.secondary, "help")
-        share = self._action_button("Добавить или поделиться", discord.ButtonStyle.secondary, "share")
+        async def help_info(interaction: discord.Interaction):
+            await show_help(interaction)
 
-        if self.variant == 1:
-            container = discord.ui.Container(
-                discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
-                discord.ui.TextDisplay("Выберите действие:"),
-                discord.ui.ActionRow(search, trader),
-                discord.ui.ActionRow(help_button, share),
-            )
-        elif self.variant == 2:
-            container = discord.ui.Container(
-                discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
-                discord.ui.TextDisplay("## 🔎 Начать поиск\nОтмечайте проверенные точки на выбранном сервере."),
-                discord.ui.ActionRow(search),
-                discord.ui.TextDisplay("## 🕵️ Где торговец?\nСмотрите подтверждённые находки на всех серверах."),
-                discord.ui.ActionRow(trader),
-                discord.ui.TextDisplay("## ℹ️ Как это работает\nКраткая справка о поиске и подтверждениях."),
-                discord.ui.ActionRow(help_button),
-                discord.ui.TextDisplay("## ➕ Добавить или поделиться\nПригласите друзей в бот."),
-                discord.ui.ActionRow(share),
-            )
-        else:
-            container = discord.ui.Container(
-                discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
-                discord.ui.TextDisplay("## Главное"),
-                discord.ui.ActionRow(search, trader),
-                discord.ui.TextDisplay("\n## Дополнительно"),
-                discord.ui.ActionRow(help_button, share),
-            )
+        search.callback = start_search
+        trader.callback = check_trader
+        help_button.callback = help_info
+        share.callback = show_bot_invite
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
+            discord.ui.TextDisplay("Выберите действие:"),
+            discord.ui.ActionRow(search, trader),
+            discord.ui.ActionRow(help_button, share),
+        )
         self.add_item(container)
 
-
-async def show_main_menu_preview(interaction: discord.Interaction, variant: int):
-    await interaction.response.send_message(
-        view=MainMenuPreviewV2View(interaction.user.id, variant),
-        ephemeral=True,
-    )
 
 class HelpInfoV2View(discord.ui.LayoutView):
     """Compact Components V2 help screen shown from the main menu."""
@@ -1641,7 +1561,7 @@ async def send_main_menu_from_command(ctx):
     """Отправка главного меню из текстовой команды"""
     ensure_user_registered(ctx.author)
 
-    await ctx.send(embed=build_main_menu_embed(), view=MainMenuView())
+    await ctx.send(view=MainMenuV2View())
 
 
 # Команда для вызова главного меню
