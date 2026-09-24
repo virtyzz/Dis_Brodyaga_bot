@@ -524,7 +524,7 @@ class TraderLocationConfirmButton(discord.ui.Button):
     """Start the confirmation flow for the exact card on the current page."""
 
     def __init__(self, user_id: int, server: str, location_name: str, return_page: int):
-        super().__init__(label="Я тоже видел", style=discord.ButtonStyle.success)
+        super().__init__(label="Подтвердить", style=discord.ButtonStyle.success)
         self.user_id = user_id
         self.server = server
         self.location_name = location_name
