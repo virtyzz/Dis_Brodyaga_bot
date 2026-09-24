@@ -17,6 +17,7 @@ from database import (
     has_trader_report_for_server,
     add_location_check,
     remove_location_check,
+    get_user_checked_locations,
     get_location_check_summary,
 )
 from coords_handler import (
@@ -217,13 +218,6 @@ class MainMenuView(discord.ui.View):
         ensure_user_registered(interaction.user)
         await show_trader_locations(interaction)
 
-    @discord.ui.button(label="Статус локаций", style=discord.ButtonStyle.primary, custom_id="main_menu_location_status", row=1)
-    async def location_status(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        ensure_user_registered(interaction.user)
-        await start_location_status(interaction)
-
     @discord.ui.button(label="Нашёл торговца", style=discord.ButtonStyle.success, custom_id="main_menu_report_trader", row=1)
     async def report_trader(
         self, interaction: discord.Interaction, button: discord.ui.Button
@@ -231,7 +225,7 @@ class MainMenuView(discord.ui.View):
         ensure_user_registered(interaction.user)
         await start_report_flow(interaction)
 
-    @discord.ui.button(label="Как это работает", style=discord.ButtonStyle.secondary, custom_id="main_menu_help", row=2)
+    @discord.ui.button(label="Как это работает", style=discord.ButtonStyle.secondary, custom_id="main_menu_help", row=1)
     async def help_info(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
@@ -855,7 +849,10 @@ def build_location_status_embed(server: str, page: int = 0, notice: str | None =
 
     embed = discord.Embed(
         title=f"🗺️ Поиск / статус · {server}",
-        description=f"Проверено: **{checked_count}/{len(locations)}** · страница {page + 1}/{pages}",
+        description=(
+            f"Проверено: **{checked_count}/{len(locations)}** · страница {page + 1}/{pages}\n"
+            "Кнопки ниже соответствуют локациям на этой странице."
+        ),
         color=discord.Color.gold(),
     )
     for location in locations[page * page_size:(page + 1) * page_size]:
@@ -873,13 +870,15 @@ def build_location_status_embed(server: str, page: int = 0, notice: str | None =
     return embed, page, pages
 
 
-class MarkLocationNotFoundButton(discord.ui.Button):
-    """One-click status action for a specific location on the visible page."""
+class LocationCheckActionButton(discord.ui.Button):
+    """Toggle the current player's check for one visible location."""
 
-    def __init__(self, user_id: int, server: str, location_name: str, row: int):
+    def __init__(
+        self, user_id: int, server: str, location_name: str, is_checked_by_user: bool, row: int
+    ):
         super().__init__(
-            label=f"Не найден: {location_name}",
-            style=discord.ButtonStyle.secondary,
+            label=(f"Отменить: {location_name}" if is_checked_by_user else f"Не найден: {location_name}"),
+            style=(discord.ButtonStyle.danger if is_checked_by_user else discord.ButtonStyle.secondary),
             row=row,
         )
         self.user_id = user_id
@@ -890,8 +889,10 @@ class MarkLocationNotFoundButton(discord.ui.Button):
         if interaction.user.id != self.user_id:
             await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
             return
-        saved = add_location_check(self.server, self.location_name, self.user_id)
-        if saved:
+        if self.label.startswith("Отменить:"):
+            remove_location_check(self.server, self.location_name, self.user_id)
+            self.view.notice = f"Отметка отменена: {self.location_name}"
+        elif add_location_check(self.server, self.location_name, self.user_id):
             self.view.notice = f"Отметка сохранена: {self.location_name}"
         else:
             self.view.notice = f"Для {self.location_name} уже подтверждён торговец."
@@ -913,12 +914,17 @@ class LocationStatusView(discord.ui.View):
             for report_server, location, _x, _y, _count in get_trader_report_summary()
             if report_server == server
         }
+        user_checks = get_user_checked_locations(server, user_id)
         locations = get_all_locations()[page * 9:(page + 1) * 9]
         for index, location in enumerate(locations):
             if location not in reports:
                 self.add_item(
-                    MarkLocationNotFoundButton(
-                        user_id, server, location, row=1 + index // 5
+                    LocationCheckActionButton(
+                        user_id,
+                        server,
+                        location,
+                        location in user_checks,
+                        row=1 + index // 5,
                     )
                 )
 

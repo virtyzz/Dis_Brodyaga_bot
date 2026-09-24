@@ -284,6 +284,22 @@ def remove_location_check(server: str, location_name: str, checker_id: int) -> b
     return removed
 
 
+def get_user_checked_locations(server: str, checker_id: int) -> set[str]:
+    """Return exact locations currently marked by one player on one server."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT location_name FROM location_checks
+        WHERE server = ? AND checker_id = ? AND status = 'not_found'
+        """,
+        (server, checker_id),
+    )
+    locations = {row[0] for row in cursor.fetchall()}
+    conn.close()
+    return locations
+
+
 def get_location_check_summary(server: str):
     """Return (location_name, latest_check_time, number_of_checkers) by location."""
     conn = sqlite3.connect(DB_PATH, timeout=10)
