@@ -509,7 +509,9 @@ def build_search_overview_embed() -> discord.Embed:
         embed.add_field(
             name=server,
             value=value,
-            inline=True,
+            # Discord раскладывает inline-поля в колонки. Статус сервера
+            # должен быть отдельным читаемым блоком, а не частью таблицы.
+            inline=False,
         )
     return embed
 
