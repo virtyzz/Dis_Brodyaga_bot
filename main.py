@@ -211,14 +211,7 @@ class MainMenuView(discord.ui.View):
         ensure_user_registered(interaction.user)
         await start_location_status(interaction, show_progress=True)
 
-    @discord.ui.button(label="Нашел торговца", style=discord.ButtonStyle.success, custom_id="main_menu_report_trader", row=0)
-    async def report_trader(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        ensure_user_registered(interaction.user)
-        await start_report_flow(interaction)
-
-    @discord.ui.button(label="Где торговец?", style=discord.ButtonStyle.primary, custom_id="main_menu_check_trader", row=1)
+    @discord.ui.button(label="Где торговец?", style=discord.ButtonStyle.primary, custom_id="main_menu_check_trader", row=0)
     async def check_trader(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
@@ -231,7 +224,7 @@ class MainMenuView(discord.ui.View):
     ):
         await show_help(interaction)
 
-    @discord.ui.button(label="Добавить бота себе или поделиться", style=discord.ButtonStyle.secondary, custom_id="main_menu_share_bot", row=2)
+    @discord.ui.button(label="Добавить или поделиться", style=discord.ButtonStyle.secondary, custom_id="main_menu_share_bot", row=1)
     async def share_bot(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
@@ -258,8 +251,8 @@ async def show_help(interaction: discord.Interaction):
             inline=False,
         )
         embed.add_field(
-            name="📢 Нашёл торговца",
-            value="Позволяет сообщить, где вы видели торговца. Выберите сервер, локацию и конкретное здание.",
+            name="🕵️ Нашёл торговца",
+            value="В разделе «Начать поиск» нажмите «Нашёл» рядом с нужной локацией.",
             inline=False,
         )
         embed.add_field(
