@@ -109,6 +109,16 @@ SERVER_DISPLAY_NAMES = {
     "cherno-4": "Chernarus 4",
 }
 
+BRODYAGA_LOCATION_SLUGS = [
+    "berezino-1", "berezino-2", "biathlon-arena-1", "biathlon-arena-2",
+    "vybor-1", "vybor-2", "gorka-1", "gorka-2", "zelenogorsk",
+    "krasnostav-1", "krasnostav-2", "novaya-petrovka", "novodmitrovsk",
+    "polyana", "pustoshka-1", "pustoshka-2", "svetlojarsk", "severograd",
+    "stary-sobor-1", "stary-sobor-2", "stary-sobor-3", "topolniki",
+    "chernaya-polyana-1", "chernaya-polyana-2", "chernaya-polyana-3",
+    "chernogorsk", "elektrozavodsk",
+]
+
 
 def get_server_display_name(server: str) -> str:
     """Return the player-facing name while preserving unknown server IDs."""
@@ -119,15 +129,9 @@ def get_brodyaga_map_url(location_name: str) -> Optional[str]:
     """Build a DayZ-Map URL that opens the exact trader marker popup."""
     locations = get_all_locations()
     try:
-        location_id = locations.index(location_name) + 1
+        location_index = locations.index(location_name)
     except ValueError:
         return None
-
-    coords = get_location_coords(location_name)
-    if not coords:
+    if location_index >= len(BRODYAGA_LOCATION_SLUGS):
         return None
-    x, y = coords
-    return (
-        "https://dayz-map.ru/"
-        f"?brodyaga=1&brodyaga_location={location_id}&x={x}&y={y}"
-    )
+    return f"https://dayz-map.ru/brodyaga/{BRODYAGA_LOCATION_SLUGS[location_index]}"
