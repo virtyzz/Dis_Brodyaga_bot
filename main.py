@@ -241,12 +241,6 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
-    @discord.ui.button(label="Тест статусов", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_status_groups", row=3)
-    async def test_status_groups(
-        self, interaction: discord.Interaction, button: discord.ui.Button
-    ):
-        await interaction.response.send_message(view=StatusGroupsTestView(), ephemeral=True)
-
 async def show_help(interaction: discord.Interaction):
         embed = discord.Embed(
             title="ℹ️ Помощь",
@@ -803,67 +797,6 @@ def humanize_check_time(value) -> str:
     return f"{hours} ч назад"
 
 
-class TestStatusActionButton(discord.ui.Button):
-    """Non-mutating action used only by the status-grouping visual preview."""
-
-    def __init__(self, label: str, style: discord.ButtonStyle):
-        super().__init__(label=label, style=style)
-
-    async def callback(self, interaction: discord.Interaction):
-        await interaction.response.send_message(
-            "Это тестовый макет: данные не изменены.", ephemeral=True
-        )
-
-
-class StatusGroupsTestView(discord.ui.LayoutView):
-    """Visual preview of the proposed grouped status layout."""
-
-    def __init__(self):
-        super().__init__(timeout=300)
-        locations = get_all_locations()[:7]
-        container = discord.ui.Container(
-            discord.ui.TextDisplay(
-                "# Поиск · cherno-1\n"
-                "Проверено: **8/27**\n"
-                "> Тестовый макет: кнопки не изменяют данные."
-            )
-        )
-
-        groups = (
-            ("📍 Торговец найден · 1", [(locations[0], "Подтверждён 3 сообщениями")], "found"),
-            (
-                "❔ Ещё не проверяли · 12",
-                [(location, "Требуется проверка") for location in locations[1:4]],
-                "unverified",
-            ),
-            (
-                "✅ Проверено, торговца нет · 14",
-                [(location, "Проверено 11 мин назад · 2 игрока") for location in locations[4:]],
-                "checked",
-            ),
-        )
-        for title, entries, status in groups:
-            container.add_item(discord.ui.TextDisplay(f"## {title}"))
-            for location, subtitle in entries:
-                container.add_item(discord.ui.TextDisplay(f"**{location}**\n{subtitle}"))
-                if status == "found":
-                    actions = discord.ui.ActionRow(
-                        TestStatusActionButton("Подтвердить", discord.ButtonStyle.primary)
-                    )
-                elif status == "unverified":
-                    actions = discord.ui.ActionRow(
-                        TestStatusActionButton("Не найден", discord.ButtonStyle.success),
-                        TestStatusActionButton("Нашёл", discord.ButtonStyle.primary),
-                    )
-                else:
-                    actions = discord.ui.ActionRow(
-                        TestStatusActionButton("Отменить", discord.ButtonStyle.danger),
-                        TestStatusActionButton("Нашёл", discord.ButtonStyle.primary),
-                    )
-                container.add_item(actions)
-        self.add_item(container)
-
-
 class LocationPhotoSelect(discord.ui.Select):
     def __init__(self, locations: list[str]):
         self.locations = locations
@@ -892,14 +825,17 @@ class LocationPhotoSelect(discord.ui.Select):
 class LocationStatusActionButton(discord.ui.Button):
     """A real status action for one location in the compact search layout."""
 
-    def __init__(self, user_id: int, server: str, location_name: str, action: str, disabled: bool = False):
-        labels = {"check": "Не найден", "cancel": "Отменить", "found": "Нашёл"}
+    def __init__(
+        self, user_id: int, server: str, location_name: str, action: str,
+        disabled: bool = False, label: str | None = None,
+    ):
+        labels = {"check": "Не найден", "cancel": "Отменить", "found": "Подтвердить"}
         styles = {
             "check": discord.ButtonStyle.success,
             "cancel": discord.ButtonStyle.danger,
             "found": discord.ButtonStyle.primary,
         }
-        super().__init__(label=labels[action], style=styles[action], disabled=disabled)
+        super().__init__(label=label or labels[action], style=styles[action], disabled=disabled)
         self.user_id = user_id
         self.server = server
         self.location_name = location_name
@@ -950,37 +886,64 @@ class LocationStatusV2View(discord.ui.LayoutView):
         checks = {location: (checked_at, count) for location, checked_at, count in get_location_check_summary(self.server)}
         reports = {location: count for report_server, location, _x, _y, count in get_trader_report_summary() if report_server == self.server}
         locations = get_all_locations()
-        pages = max(1, (len(locations) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        found_locations = sorted(location for location in locations if location in reports)
+        unverified_locations = sorted(
+            location for location in locations if location not in reports and location not in checks
+        )
+        checked_locations = sorted(
+            location for location in locations if location not in reports and location in checks
+        )
+        ordered_locations = (
+            [("found", location) for location in found_locations]
+            + [("unverified", location) for location in unverified_locations]
+            + [("checked", location) for location in checked_locations]
+        )
+        pages = max(1, (len(ordered_locations) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
         self.page = max(0, min(self.page, pages - 1))
-        page_locations = locations[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
-        checked_count = sum(1 for location in locations if location in checks and location not in reports)
+        page_locations = ordered_locations[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
+        checked_count = len(checked_locations)
         user_checks = get_user_checked_locations(self.server, self.user_id)
         header = f"# Поиск · {self.server}\nПроверено: **{checked_count}/{len(locations)}** · Страница {self.page + 1}/{pages}"
         container = discord.ui.Container(discord.ui.TextDisplay(header))
         if self.notice:
             container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
 
-        for location in page_locations:
-            if location in reports:
+        group_titles = {
+            "found": f"## 📍 Торговец найден · {len(found_locations)}",
+            "unverified": f"## ❔ Ещё не проверяли · {len(unverified_locations)}",
+            "checked": f"## ✅ Проверено, торговца нет · {len(checked_locations)}",
+        }
+        current_group = None
+        for group, location in page_locations:
+            if group != current_group:
+                container.add_item(discord.ui.TextDisplay(group_titles[group]))
+                current_group = group
+            if group == "found":
                 status = f"Торговец подтверждён · сообщений: {reports[location]}"
-            elif location in checks:
+            elif group == "checked":
                 checked_at, count = checks[location]
                 people = "игрок" if count == 1 else "игрока" if 2 <= count <= 4 else "игроков"
                 status = f"Проверено {humanize_check_time(checked_at)} · {count} {people}"
             else:
                 status = "Ещё не проверяли"
-            check_action = "cancel" if location in user_checks else "check"
             container.add_item(discord.ui.TextDisplay(f"**{location}**\n{status}"))
-            container.add_item(
-                discord.ui.ActionRow(
-                    LocationStatusActionButton(
-                        self.user_id, self.server, location, check_action, location in reports
-                    ),
-                    LocationStatusActionButton(self.user_id, self.server, location, "found"),
+            if group == "found":
+                actions = discord.ui.ActionRow(
+                    LocationStatusActionButton(self.user_id, self.server, location, "found")
                 )
-            )
+            else:
+                check_action = "cancel" if location in user_checks else "check"
+                actions = discord.ui.ActionRow(
+                    LocationStatusActionButton(self.user_id, self.server, location, check_action),
+                    LocationStatusActionButton(
+                        self.user_id, self.server, location, "found", label="Нашёл"
+                    ),
+                )
+            container.add_item(actions)
 
-        container.add_item(discord.ui.ActionRow(LocationPhotoSelect(page_locations)))
+        container.add_item(
+            discord.ui.ActionRow(LocationPhotoSelect([location for _group, location in page_locations]))
+        )
         container.add_item(
             discord.ui.ActionRow(
                 self._navigation_button("Назад", -1, self.page <= 0),
