@@ -241,6 +241,12 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="Тест статусов", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_status_groups", row=3)
+    async def test_status_groups(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.response.send_message(view=StatusGroupsTestView(), ephemeral=True)
+
 async def show_help(interaction: discord.Interaction):
         embed = discord.Embed(
             title="ℹ️ Помощь",
@@ -795,6 +801,67 @@ def humanize_check_time(value) -> str:
         return f"{minutes} мин назад"
     hours = minutes // 60
     return f"{hours} ч назад"
+
+
+class TestStatusActionButton(discord.ui.Button):
+    """Non-mutating action used only by the status-grouping visual preview."""
+
+    def __init__(self, label: str, style: discord.ButtonStyle):
+        super().__init__(label=label, style=style)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            "Это тестовый макет: данные не изменены.", ephemeral=True
+        )
+
+
+class StatusGroupsTestView(discord.ui.LayoutView):
+    """Visual preview of the proposed grouped status layout."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+        locations = get_all_locations()[:7]
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(
+                "# Поиск · cherno-1\n"
+                "Проверено: **8/27**\n"
+                "> Тестовый макет: кнопки не изменяют данные."
+            )
+        )
+
+        groups = (
+            ("📍 Торговец найден · 1", [(locations[0], "Подтверждён 3 сообщениями")], "found"),
+            (
+                "❔ Ещё не проверяли · 12",
+                [(location, "Требуется проверка") for location in locations[1:4]],
+                "unverified",
+            ),
+            (
+                "✅ Проверено, торговца нет · 14",
+                [(location, "Проверено 11 мин назад · 2 игрока") for location in locations[4:]],
+                "checked",
+            ),
+        )
+        for title, entries, status in groups:
+            container.add_item(discord.ui.TextDisplay(f"## {title}"))
+            for location, subtitle in entries:
+                container.add_item(discord.ui.TextDisplay(f"**{location}**\n{subtitle}"))
+                if status == "found":
+                    actions = discord.ui.ActionRow(
+                        TestStatusActionButton("Подтвердить", discord.ButtonStyle.primary)
+                    )
+                elif status == "unverified":
+                    actions = discord.ui.ActionRow(
+                        TestStatusActionButton("Не найден", discord.ButtonStyle.success),
+                        TestStatusActionButton("Нашёл", discord.ButtonStyle.primary),
+                    )
+                else:
+                    actions = discord.ui.ActionRow(
+                        TestStatusActionButton("Отменить", discord.ButtonStyle.danger),
+                        TestStatusActionButton("Нашёл", discord.ButtonStyle.primary),
+                    )
+                container.add_item(actions)
+        self.add_item(container)
 
 
 class LocationPhotoSelect(discord.ui.Select):
