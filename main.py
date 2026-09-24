@@ -264,8 +264,10 @@ async def show_help(interaction: discord.Interaction):
 
 
 async def show_trader_locations(interaction: discord.Interaction):
-    """Show current trader reports for all servers immediately."""
-    await show_trader_locations_detail(interaction)
+    """Show trader reports in one navigable Components V2 result screen."""
+    await interaction.response.send_message(
+        view=TraderLocationsV2View(interaction.user.id), ephemeral=True
+    )
 
 
 async def show_trader_locations_detail(
@@ -385,6 +387,260 @@ async def show_trader_locations_detail(
                 first_server = False
             else:
                 await interaction.followup.send(embed=embed, ephemeral=True)
+
+
+def get_grouped_trader_reports() -> dict[str, dict[str, dict]]:
+    """Return current reports grouped by server and exact location."""
+    grouped: dict[str, dict[str, dict]] = {server: {} for server in SERVERS}
+    for server, location_name, x, y, is_first, username in get_trader_reports():
+        location = grouped.setdefault(server, {}).setdefault(
+            location_name, {"x": x, "y": y, "users": []}
+        )
+        if username not in location["users"]:
+            location["users"].append(username)
+    return grouped
+
+
+def format_trader_server_status(locations: dict[str, dict]) -> str:
+    """Format all current reports for one server, retaining reporter nicknames."""
+    if not locations:
+        return "❔ Сообщений о торговце пока нет."
+
+    reports = sorted(
+        locations.items(), key=lambda item: (-len(item[1]["users"]), item[0])
+    )
+    lines = []
+    if len(reports) == 1:
+        lines.append("🕵️ **Торговец найден**")
+    else:
+        lines.append("⚠️ **Сообщения расходятся**")
+
+    for location_name, data in reports:
+        users = [escape_markdown(username) for username in data["users"]]
+        users_text = ", ".join([f"**{users[0]}**"] + users[1:])
+        confirmations = len(users)
+        word = (
+            "подтверждение" if confirmations == 1
+            else "подтверждения" if confirmations < 5 else "подтверждений"
+        )
+        lines.append(
+            f"**{location_name}** · {confirmations} {word}\n"
+            f"📍 X: {data['x']}, Y: {data['y']}\n"
+            f"👥 Сообщили: {users_text}"
+        )
+    return "\n\n".join(lines)
+
+
+class TraderLocationConfirmSelect(discord.ui.Select):
+    """Let a player choose an already reported point to confirm."""
+
+    def __init__(self, user_id: int, server: str, locations: list[str]):
+        self.user_id = user_id
+        self.server = server
+        super().__init__(
+            placeholder="Я тоже видел торговца в...",
+            options=[discord.SelectOption(label=location, value=location) for location in locations],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return
+        await interaction.response.edit_message(
+            view=TraderReportConfirmationView(
+                self.user_id, self.server, self.values[0]
+            )
+        )
+
+
+class TraderReportConfirmationView(discord.ui.LayoutView):
+    """Confirmation before a report is added from the public status screen."""
+
+    def __init__(self, user_id: int, server: str, location_name: str):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.server = server
+        self.location_name = location_name
+
+        container = discord.ui.Container(
+            discord.ui.TextDisplay("# Подтвердить торговца")
+        )
+        container.add_item(
+            discord.ui.TextDisplay(
+                f"Подтвердить торговца в **{location_name}** на сервере **{server}**?"
+            )
+        )
+        container.add_item(
+            discord.ui.TextDisplay(
+                "> Ваше подтверждение станет видно другим игрокам."
+            )
+        )
+        confirm_button = discord.ui.Button(
+            label="Да, подтвердить", style=discord.ButtonStyle.success
+        )
+        cancel_button = discord.ui.Button(
+            label="Отмена", style=discord.ButtonStyle.secondary
+        )
+        confirm_button.callback = self._confirm_callback
+        cancel_button.callback = self._cancel_callback
+        container.add_item(discord.ui.ActionRow(confirm_button, cancel_button))
+        self.add_item(container)
+
+    async def interaction_check(self, interaction: discord.Interaction) -> bool:
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return False
+        return True
+
+    async def _confirm_callback(self, interaction: discord.Interaction):
+        coords = get_location_coords(self.location_name)
+        if not coords:
+            notice = f"Не удалось найти координаты: {self.location_name}"
+        else:
+            is_first = add_trader_report(
+                self.server, self.location_name, coords[0], coords[1], self.user_id
+            )
+            notice = (
+                f"Торговец подтверждён: {self.location_name}"
+                if is_first
+                else f"Ваше сообщение обновлено: {self.location_name}"
+            )
+        await interaction.response.edit_message(
+            view=TraderLocationsV2View(self.user_id, self.server, notice)
+        )
+
+    async def _cancel_callback(self, interaction: discord.Interaction):
+        await interaction.response.edit_message(
+            view=TraderLocationsV2View(self.user_id, self.server)
+        )
+
+
+class TraderLocationsV2View(discord.ui.LayoutView):
+    """One V2 result screen for all trader reports or one selected server."""
+
+    ALL_SERVERS = "__all_servers__"
+
+    def __init__(
+        self,
+        user_id: int,
+        selected_server: str | None = None,
+        notice: str | None = None,
+        location_page: int = 0,
+    ):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.selected_server = selected_server
+        self.notice = notice
+        self.location_page = location_page
+        self._build_layout()
+
+    def _build_layout(self):
+        reports = get_grouped_trader_reports()
+        container = discord.ui.Container(discord.ui.TextDisplay("# 📍 Где торговец?"))
+        if self.notice:
+            container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
+
+        options = [
+            discord.SelectOption(
+                label="Все серверы", value=self.ALL_SERVERS,
+                emoji="🗺️", default=self.selected_server is None,
+            )
+        ]
+        options.extend(
+            discord.SelectOption(
+                label=server, value=server, emoji="🌐",
+                default=server == self.selected_server,
+            )
+            for server in SERVERS
+        )
+        server_select = discord.ui.Select(
+            placeholder="Выберите сервер...", options=options
+        )
+
+        async def select_server(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+                return
+            selected = server_select.values[0]
+            await interaction.response.edit_message(
+                view=TraderLocationsV2View(
+                    self.user_id,
+                    None if selected == self.ALL_SERVERS else selected,
+                )
+            )
+
+        server_select.callback = select_server
+        container.add_item(discord.ui.ActionRow(server_select))
+
+        servers_to_show = [self.selected_server] if self.selected_server else SERVERS
+        for index, server in enumerate(servers_to_show):
+            container.add_item(discord.ui.TextDisplay(f"## {server}"))
+            container.add_item(
+                discord.ui.TextDisplay(format_trader_server_status(reports[server]))
+            )
+            if index < len(servers_to_show) - 1:
+                container.add_item(
+                    discord.ui.Separator(spacing=discord.SeparatorSpacing.small)
+                )
+
+        if self.selected_server and reports[self.selected_server]:
+            locations = sorted(reports[self.selected_server])
+            location_pages = max(1, (len(locations) + 24) // 25)
+            self.location_page = max(0, min(self.location_page, location_pages - 1))
+            visible_locations = locations[self.location_page * 25:(self.location_page + 1) * 25]
+            container.add_item(
+                discord.ui.ActionRow(LocationPhotoSelect(visible_locations))
+            )
+            container.add_item(
+                discord.ui.ActionRow(
+                    TraderLocationConfirmSelect(
+                        self.user_id, self.selected_server, visible_locations
+                    )
+                )
+            )
+            if location_pages > 1:
+                previous = discord.ui.Button(
+                    label="Назад", style=discord.ButtonStyle.secondary,
+                    disabled=self.location_page == 0,
+                )
+                next_page = discord.ui.Button(
+                    label="Вперёд", style=discord.ButtonStyle.secondary,
+                    disabled=self.location_page >= location_pages - 1,
+                )
+
+                async def change_location_page(interaction: discord.Interaction, step: int):
+                    if interaction.user.id != self.user_id:
+                        await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+                        return
+                    await interaction.response.edit_message(
+                        view=TraderLocationsV2View(
+                            self.user_id, self.selected_server,
+                            location_page=self.location_page + step,
+                        )
+                    )
+
+                async def previous_callback(interaction: discord.Interaction):
+                    await change_location_page(interaction, -1)
+
+                async def next_callback(interaction: discord.Interaction):
+                    await change_location_page(interaction, 1)
+
+                previous.callback = previous_callback
+                next_page.callback = next_callback
+                container.add_item(
+                    discord.ui.ActionRow(previous, next_page)
+                )
+
+        if MAP_URL and MAP_URL.strip():
+            container.add_item(
+                discord.ui.ActionRow(
+                    discord.ui.Button(
+                        label="Открыть карту", style=discord.ButtonStyle.link,
+                        url=MAP_URL.strip(),
+                    )
+                )
+            )
+        self.add_item(container)
 
 
 async def start_report_flow(interaction: discord.Interaction):
