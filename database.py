@@ -53,6 +53,24 @@ def init_database():
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS location_checks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            server VARCHAR(20) NOT NULL,
+            location_name VARCHAR(50) NOT NULL,
+            checker_id BIGINT NOT NULL,
+            checked_at TIMESTAMP NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'not_found',
+            UNIQUE(server, location_name, checker_id),
+            FOREIGN KEY (checker_id) REFERENCES users(user_id)
+        )
+    """)
+    _migrate_location_checks_schema(cursor)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_location_checks_server_location
+        ON location_checks(server, location_name)
+    """)
+
     conn.commit()
     conn.close()
 
@@ -107,6 +125,10 @@ def add_trader_report(
             "UPDATE trader_reports SET report_date = ?, x_coord = ?, y_coord = ? WHERE server = ? AND reporter_id = ?",
             (datetime.now(), x_coord, y_coord, server, reporter_id),
         )
+        cursor.execute(
+            "DELETE FROM location_checks WHERE server = ? AND location_name = ?",
+            (server, location_name),
+        )
         conn.commit()
         conn.close()
         return False  # Не первый
@@ -132,9 +154,49 @@ def add_trader_report(
         (server, location_name, x_coord, y_coord, reporter_id, datetime.now(), is_first),
     )
 
+    # A confirmed trader report supersedes all "not found" checks for this point.
+    cursor.execute(
+        "DELETE FROM location_checks WHERE server = ? AND location_name = ?",
+        (server, location_name),
+    )
+
     conn.commit()
     conn.close()
     return is_first
+
+
+def _migrate_location_checks_schema(cursor):
+    """Upgrade the first release's one-check-per-server constraint safely."""
+    cursor.execute("PRAGMA index_list(location_checks)")
+    for index in cursor.fetchall():
+        if not index[2]:
+            continue
+        cursor.execute(f'PRAGMA index_info("{index[1]}")')
+        columns = [item[2] for item in cursor.fetchall()]
+        if columns != ["server", "checker_id"]:
+            continue
+
+        cursor.execute("""
+            CREATE TABLE location_checks_new (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server VARCHAR(20) NOT NULL,
+                location_name VARCHAR(50) NOT NULL,
+                checker_id BIGINT NOT NULL,
+                checked_at TIMESTAMP NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'not_found',
+                UNIQUE(server, location_name, checker_id),
+                FOREIGN KEY (checker_id) REFERENCES users(user_id)
+            )
+        """)
+        cursor.execute("""
+            INSERT INTO location_checks_new
+                (id, server, location_name, checker_id, checked_at, status)
+            SELECT id, server, location_name, checker_id, checked_at, status
+            FROM location_checks
+        """)
+        cursor.execute("DROP TABLE location_checks")
+        cursor.execute("ALTER TABLE location_checks_new RENAME TO location_checks")
+        break
 
 
 def get_trader_reports():
@@ -180,6 +242,66 @@ def has_trader_report_for_server(server: str, location_name: str) -> bool:
     return count > 0
 
 
+def add_location_check(server: str, location_name: str, checker_id: int):
+    """Save or refresh a player's 'trader not found' check for one exact point."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT 1 FROM trader_reports WHERE server = ? AND location_name = ? LIMIT 1",
+        (server, location_name),
+    )
+    if cursor.fetchone():
+        conn.close()
+        return False
+    cursor.execute(
+        """
+        INSERT INTO location_checks (server, location_name, checker_id, checked_at, status)
+        VALUES (?, ?, ?, ?, 'not_found')
+        ON CONFLICT(server, location_name, checker_id)
+        DO UPDATE SET checked_at = excluded.checked_at, status = excluded.status
+        """,
+        (server, location_name, checker_id, datetime.now()),
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def remove_location_check(server: str, location_name: str, checker_id: int) -> bool:
+    """Withdraw the player's check for a point."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        DELETE FROM location_checks
+        WHERE server = ? AND location_name = ? AND checker_id = ?
+        """,
+        (server, location_name, checker_id),
+    )
+    removed = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return removed
+
+
+def get_location_check_summary(server: str):
+    """Return (location_name, latest_check_time, number_of_checkers) by location."""
+    conn = sqlite3.connect(DB_PATH, timeout=10)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT location_name, MAX(checked_at), COUNT(DISTINCT checker_id)
+        FROM location_checks
+        WHERE server = ? AND status = 'not_found'
+        GROUP BY location_name
+        """,
+        (server,),
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
 def archive_reports():
     """Архивирование текущих отчетов в историю"""
     conn = sqlite3.connect(DB_PATH, timeout=10)
@@ -194,6 +316,7 @@ def archive_reports():
     """, (now,))
 
     cursor.execute("DELETE FROM trader_reports")
+    cursor.execute("DELETE FROM location_checks")
 
     conn.commit()
     conn.close()
