@@ -245,7 +245,8 @@ class MainMenuView(discord.ui.View):
     async def test_v2_cards(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        await interaction.response.send_message(view=TestCardsV2View(), ephemeral=True)
+        view, files = build_test_cards_v2_view()
+        await interaction.response.send_message(view=view, files=files, ephemeral=True)
 
     @discord.ui.button(label="Тест 2", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_v2_inline", row=3)
     async def test_v2_inline(
@@ -1000,17 +1001,18 @@ class TestPhotoSelect(discord.ui.Select):
 class TestCardsV2View(discord.ui.LayoutView):
     """Test 1: five rich cards, a thumbnail, and two actions per location."""
 
-    def __init__(self):
+    def __init__(self, attachment_names: dict[str, str]):
         super().__init__(timeout=300)
         locations = get_all_locations()[:5]
         container = discord.ui.Container(
             discord.ui.TextDisplay("# Тест 1 · Карточки\n5 точек с изображением и двумя действиями.")
         )
         for index, location in enumerate(locations):
-            screenshot = get_screenshot_path(location)
             accessory = (
-                discord.ui.Thumbnail(discord.File(screenshot), description=location)
-                if screenshot
+                discord.ui.Thumbnail(
+                    f"attachment://{attachment_names[location]}", description=location
+                )
+                if location in attachment_names
                 else TestActionButton("Нет фото")
             )
             container.add_item(
@@ -1026,6 +1028,20 @@ class TestCardsV2View(discord.ui.LayoutView):
                 )
             )
         self.add_item(container)
+
+
+def build_test_cards_v2_view() -> tuple[TestCardsV2View, list[discord.File]]:
+    """Build Test 1 and attach every thumbnail referenced by its layout."""
+    attachment_names = {}
+    files = []
+    for index, location in enumerate(get_all_locations()[:5]):
+        screenshot = get_screenshot_path(location)
+        if not screenshot:
+            continue
+        filename = f"test-card-{index}.png"
+        attachment_names[location] = filename
+        files.append(discord.File(screenshot, filename=filename))
+    return TestCardsV2View(attachment_names), files
 
 
 class TestInlineV2View(discord.ui.LayoutView):
