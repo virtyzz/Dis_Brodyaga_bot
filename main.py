@@ -230,11 +230,105 @@ class MainMenuView(discord.ui.View):
     async def share_bot(
         self, interaction: discord.Interaction, button: discord.ui.Button
     ):
-        await interaction.response.send_message(
-            "Ссылка для добавления и отправки друзьям:\n"
-            "https://discord.com/oauth2/authorize?client_id=1492221304173236406&permissions=274878023680&integration_type=0&scope=bot+applications.commands",
-            ephemeral=True,
-        )
+        await show_bot_invite(interaction)
+
+    @discord.ui.button(label="Вариант 1", style=discord.ButtonStyle.secondary, custom_id="main_menu_preview_1", row=2)
+    async def preview_variant_1(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await show_main_menu_preview(interaction, 1)
+
+    @discord.ui.button(label="Вариант 2", style=discord.ButtonStyle.secondary, custom_id="main_menu_preview_2", row=2)
+    async def preview_variant_2(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await show_main_menu_preview(interaction, 2)
+
+    @discord.ui.button(label="Вариант 3", style=discord.ButtonStyle.secondary, custom_id="main_menu_preview_3", row=2)
+    async def preview_variant_3(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await show_main_menu_preview(interaction, 3)
+
+
+async def show_bot_invite(interaction: discord.Interaction):
+    await interaction.response.send_message(
+        "Ссылка для добавления и отправки друзьям:\n"
+        "https://discord.com/oauth2/authorize?client_id=1492221304173236406&permissions=274878023680&integration_type=0&scope=bot+applications.commands",
+        ephemeral=True,
+    )
+
+
+class MainMenuPreviewV2View(discord.ui.LayoutView):
+    """Interactive V2 mock-up of one prospective main-menu layout."""
+
+    def __init__(self, user_id: int, variant: int):
+        super().__init__(timeout=300)
+        self.user_id = user_id
+        self.variant = variant
+        self._build_layout()
+
+    def _action_button(self, label: str, style: discord.ButtonStyle, action: str):
+        button = discord.ui.Button(label=label, style=style)
+
+        async def callback(interaction: discord.Interaction):
+            if interaction.user.id != self.user_id:
+                await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+                return
+            ensure_user_registered(interaction.user)
+            if action == "search":
+                await start_location_status(interaction, show_progress=True)
+            elif action == "trader":
+                await show_trader_locations(interaction)
+            elif action == "help":
+                await show_help(interaction)
+            else:
+                await show_bot_invite(interaction)
+
+        button.callback = callback
+        return button
+
+    def _build_layout(self):
+        search = self._action_button("Начать поиск", discord.ButtonStyle.success, "search")
+        trader = self._action_button("Где торговец?", discord.ButtonStyle.primary, "trader")
+        help_button = self._action_button("Как это работает", discord.ButtonStyle.secondary, "help")
+        share = self._action_button("Добавить или поделиться", discord.ButtonStyle.secondary, "share")
+
+        if self.variant == 1:
+            container = discord.ui.Container(
+                discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
+                discord.ui.TextDisplay("Выберите действие:"),
+                discord.ui.ActionRow(search, trader),
+                discord.ui.ActionRow(help_button, share),
+            )
+        elif self.variant == 2:
+            container = discord.ui.Container(
+                discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
+                discord.ui.TextDisplay("## 🔎 Начать поиск\nОтмечайте проверенные точки на выбранном сервере."),
+                discord.ui.ActionRow(search),
+                discord.ui.TextDisplay("## 🕵️ Где торговец?\nСмотрите подтверждённые находки на всех серверах."),
+                discord.ui.ActionRow(trader),
+                discord.ui.TextDisplay("## ℹ️ Как это работает\nКраткая справка о поиске и подтверждениях."),
+                discord.ui.ActionRow(help_button),
+                discord.ui.TextDisplay("## ➕ Добавить или поделиться\nПригласите друзей в бот."),
+                discord.ui.ActionRow(share),
+            )
+        else:
+            container = discord.ui.Container(
+                discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
+                discord.ui.TextDisplay("## Главное"),
+                discord.ui.ActionRow(search, trader),
+                discord.ui.TextDisplay("\n## Дополнительно"),
+                discord.ui.ActionRow(help_button, share),
+            )
+        self.add_item(container)
+
+
+async def show_main_menu_preview(interaction: discord.Interaction, variant: int):
+    await interaction.response.send_message(
+        view=MainMenuPreviewV2View(interaction.user.id, variant),
+        ephemeral=True,
+    )
 
 class HelpInfoV2View(discord.ui.LayoutView):
     """Compact Components V2 help screen shown from the main menu."""
