@@ -248,26 +248,23 @@ class HelpInfoV2View(discord.ui.LayoutView):
                 "Бот помогает отслеживать Бродячего торговца на четырёх серверах Chernarus YourWorld PVE."
             ),
         )
-        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
         container.add_item(
             discord.ui.TextDisplay(
-                "**🕵️ Где торговец?**\n"
+                "\n**🕵️ Где торговец?**\n"
                 "Показывает подтверждённые находки сразу по всем серверам: "
                 "локацию, ник игрока, который её отметил, и время сообщения."
             )
         )
-        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
         container.add_item(
             discord.ui.TextDisplay(
-                "**🔎 Начать поиск**\n"
+                "\n**🔎 Начать поиск**\n"
                 "Выберите сервер и проверяйте локации. Для каждой точки можно отметить: "
                 "торговец не найден или найден. Перед отправкой находки бот попросит подтверждение."
             )
         )
-        container.add_item(discord.ui.Separator(spacing=discord.SeparatorSpacing.small))
         container.add_item(
             discord.ui.TextDisplay(
-                "**🔄 Обновление данных**\n"
+                "\n**🔄 Обновление данных**\n"
                 "Поиски и сообщения сбрасываются ежедневно в 00:00 по московскому времени."
             )
         )
