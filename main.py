@@ -536,7 +536,7 @@ class TraderLocationsV2View(discord.ui.LayoutView):
 
     def _build_layout(self):
         reports = get_grouped_trader_reports()
-        container = discord.ui.Container(discord.ui.TextDisplay("# 📍 Где торговец?"))
+        container = discord.ui.Container(discord.ui.TextDisplay("# 🕵️ Где торговец?"))
         if self.notice:
             container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
 
