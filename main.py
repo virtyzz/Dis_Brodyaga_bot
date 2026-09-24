@@ -241,6 +241,24 @@ class MainMenuView(discord.ui.View):
             ephemeral=True,
         )
 
+    @discord.ui.button(label="Тест 1", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_v2_cards", row=3)
+    async def test_v2_cards(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.response.send_message(view=TestCardsV2View(), ephemeral=True)
+
+    @discord.ui.button(label="Тест 2", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_v2_inline", row=3)
+    async def test_v2_inline(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.response.send_message(view=TestInlineV2View(), ephemeral=True)
+
+    @discord.ui.button(label="Тест 3", style=discord.ButtonStyle.secondary, custom_id="main_menu_test_v2_actions", row=3)
+    async def test_v2_actions(
+        self, interaction: discord.Interaction, button: discord.ui.Button
+    ):
+        await interaction.response.send_message(view=TestActionsV2View(), ephemeral=True)
+
 async def show_help(interaction: discord.Interaction):
         embed = discord.Embed(
             title="ℹ️ Помощь",
@@ -930,6 +948,129 @@ class LocationStatusV2View(discord.ui.LayoutView):
             notice,
         )
         await interaction.response.edit_message(view=next_view)
+
+
+def test_location_status(index: int) -> str:
+    """Static labels for visual-only Components V2 layout previews."""
+    variants = (
+        "Ещё не проверяли",
+        "Проверено 12 мин назад · 2 игрока",
+        "Торговец подтверждён · 3 сообщения",
+    )
+    return variants[index % len(variants)]
+
+
+class TestActionButton(discord.ui.Button):
+    """A non-mutating button used only by the three layout previews."""
+
+    def __init__(self, label: str, style: discord.ButtonStyle = discord.ButtonStyle.secondary):
+        super().__init__(label=label, style=style)
+
+    async def callback(self, interaction: discord.Interaction):
+        await interaction.response.send_message(
+            "Это тестовый макет: данные не изменены.", ephemeral=True
+        )
+
+
+class TestPhotoSelect(discord.ui.Select):
+    def __init__(self, locations: list[str]):
+        self.locations = locations
+        super().__init__(
+            placeholder="Показать фото локации...",
+            options=[
+                discord.SelectOption(label=location, value=str(index))
+                for index, location in enumerate(locations)
+            ],
+        )
+
+    async def callback(self, interaction: discord.Interaction):
+        location = self.locations[int(self.values[0])]
+        screenshot = get_screenshot_path(location)
+        if not screenshot:
+            await interaction.response.send_message(
+                f"Для {location} нет изображения.", ephemeral=True
+            )
+            return
+        file = discord.File(screenshot, filename="location-preview.png")
+        await interaction.response.send_message(
+            content=location, file=file, ephemeral=True
+        )
+
+
+class TestCardsV2View(discord.ui.LayoutView):
+    """Test 1: five rich cards, a thumbnail, and two actions per location."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+        locations = get_all_locations()[:5]
+        container = discord.ui.Container(
+            discord.ui.TextDisplay("# Тест 1 · Карточки\n5 точек с изображением и двумя действиями.")
+        )
+        for index, location in enumerate(locations):
+            screenshot = get_screenshot_path(location)
+            accessory = (
+                discord.ui.Thumbnail(discord.File(screenshot), description=location)
+                if screenshot
+                else TestActionButton("Нет фото")
+            )
+            container.add_item(
+                discord.ui.Section(
+                    f"**{location}**\n{test_location_status(index)}",
+                    accessory=accessory,
+                )
+            )
+            container.add_item(
+                discord.ui.ActionRow(
+                    TestActionButton("Не найден", discord.ButtonStyle.success),
+                    TestActionButton("Нашёл", discord.ButtonStyle.primary),
+                )
+            )
+        self.add_item(container)
+
+
+class TestInlineV2View(discord.ui.LayoutView):
+    """Test 2: nine dense rows, one inline action, and a photo picker."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+        locations = get_all_locations()[:9]
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(
+                "# Тест 2 · Плотные строки\n9 точек, кнопка действия справа; фото открывается через список."
+            )
+        )
+        for index, location in enumerate(locations):
+            container.add_item(
+                discord.ui.Section(
+                    f"**{location}**\n{test_location_status(index)}",
+                    accessory=TestActionButton("Не найден", discord.ButtonStyle.success),
+                )
+            )
+        container.add_item(discord.ui.ActionRow(TestPhotoSelect(locations)))
+        self.add_item(container)
+
+
+class TestActionsV2View(discord.ui.LayoutView):
+    """Test 3: compact rows with two actions and no thumbnails."""
+
+    def __init__(self):
+        super().__init__(timeout=300)
+        container = discord.ui.Container(
+            discord.ui.TextDisplay(
+                "# Тест 3 · Два действия\n7 компактных строк без изображений."
+            )
+        )
+        for index, location in enumerate(get_all_locations()[:7]):
+            container.add_item(
+                discord.ui.TextDisplay(f"**{location}**\n{test_location_status(index)}")
+            )
+            container.add_item(
+                discord.ui.ActionRow(
+                    TestActionButton("Не найден", discord.ButtonStyle.success),
+                    TestActionButton("Нашёл", discord.ButtonStyle.primary),
+                )
+            )
+        self.add_item(container)
 
 
 async def start_location_status(interaction: discord.Interaction, show_progress: bool = False):
