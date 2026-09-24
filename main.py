@@ -502,15 +502,19 @@ def build_search_overview_embed() -> discord.Embed:
             for location, _checked_at, _count in get_location_check_summary(server)
             if (server, location) not in reports
         )
+        trader_text, _select_description = trader_statuses[server]
+        value = f"Проверено: **{checked}/{total} точек**"
+        if trader_text:
+            value = f"{trader_text}\n{value}"
         embed.add_field(
             name=server,
-            value=f"{trader_statuses[server][0]}\nПроверено: **{checked}/{total} точек**",
+            value=value,
             inline=True,
         )
     return embed
 
 
-def get_server_trader_statuses() -> dict[str, tuple[str, str]]:
+def get_server_trader_statuses() -> dict[str, tuple[str | None, str | None]]:
     """Build full and select-menu-friendly trader status text for every server."""
     reports_by_server = {server: [] for server in SERVERS}
     for server, location, _x, _y, confirmations in get_trader_report_summary():
@@ -519,7 +523,7 @@ def get_server_trader_statuses() -> dict[str, tuple[str, str]]:
     statuses = {}
     for server, reports in reports_by_server.items():
         if not reports:
-            statuses[server] = ("❔ Сообщений о торговце нет", "Нет сообщений о торговце")
+            statuses[server] = (None, None)
             continue
         reports.sort(key=lambda item: (-item[1], item[0]))
         leader, confirmations = reports[0]
@@ -1026,6 +1030,8 @@ async def start_location_status(interaction: discord.Interaction, show_progress:
                 description=trader_statuses[server][1],
                 emoji="🌐",
             )
+            if trader_statuses[server][1]
+            else discord.SelectOption(label=server, value=server, emoji="🌐")
             for server in SERVERS
         ],
     )
