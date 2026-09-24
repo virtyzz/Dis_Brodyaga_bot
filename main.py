@@ -192,7 +192,7 @@ def build_main_menu_embed() -> discord.Embed:
     """Build the stable main menu; live search figures belong to the search view."""
     embed = discord.Embed(
         title="🕵️ Бродячий торговец",
-        description="Выберите действие. Актуальные данные сбрасываются в 00:00 МСК.",
+        description="Выберите действие:",
         color=discord.Color.gold(),
     )
     return embed
