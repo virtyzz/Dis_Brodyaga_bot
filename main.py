@@ -696,16 +696,19 @@ class TraderLocationsV2View(discord.ui.LayoutView):
                     discord.ui.Separator(spacing=discord.SeparatorSpacing.small)
                 )
 
-        navigation = discord.ui.ActionRow(
-            self._navigation_button("Назад", -1, self.page <= 0),
-            self._refresh_button(),
-            self._navigation_button("Вперёд", 1, self.page >= pages - 1),
-        )
+        navigation_items = []
+        if self.page > 0:
+            navigation_items.append(self._navigation_button("Назад", -1))
+        navigation_items.append(self._refresh_button())
+        if self.page < pages - 1:
+            navigation_items.append(self._navigation_button("Вперёд", 1))
+
+        navigation = discord.ui.ActionRow(*navigation_items)
         container.add_item(navigation)
         self.add_item(container)
 
-    def _navigation_button(self, label: str, step: int, disabled: bool):
-        button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary, disabled=disabled)
+    def _navigation_button(self, label: str, step: int):
+        button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
 
         async def callback(interaction: discord.Interaction):
             if interaction.user.id != self.user_id:
