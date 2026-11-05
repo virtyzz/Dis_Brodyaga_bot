@@ -139,7 +139,7 @@ async def on_ready():
     init_database()
     print("База данных инициализирована")
 
-    # Запуск задачи архивирования (00:00 MSK = 21:00 UTC)
+    # Запуск задачи архивирования (04:00 MSK = 01:00 UTC)
     archive_daily.start()
     print("Задача ежедневного архивирования запущена")
 
@@ -150,10 +150,10 @@ async def on_ready():
 
 @tasks.loop(minutes=1)
 async def archive_daily():
-    """Ежедневное архивирование данных в 00:00 MSK (21:00 UTC)"""
+    """Ежедневное архивирование данных в 04:00 MSK (01:00 UTC)"""
     now_utc = datetime.utcnow()
     print(f"[Archive check] UTC time: {now_utc.strftime('%H:%M:%S')}")
-    if now_utc.hour == 21 and now_utc.minute < 3:
+    if now_utc.hour == 1 and now_utc.minute < 3:
         if not hasattr(archive_daily, "last_run") or archive_daily.last_run != now_utc.date():
             print("Выполняется ежедневное архивирование данных...")
             archive_reports()
@@ -279,7 +279,7 @@ class HelpInfoV2View(discord.ui.LayoutView):
         container.add_item(
             discord.ui.TextDisplay(
                 "\n**🔄 Обновление данных**\n"
-                "Поиски и сообщения сбрасываются ежедневно в 00:00 по московскому времени."
+                "Поиски и сообщения сбрасываются ежедневно в 04:00 по московскому времени."
             )
         )
         self.add_item(container)
