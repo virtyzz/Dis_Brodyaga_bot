@@ -4,6 +4,7 @@ import os
 import re
 import time
 import pytz
+from subscriptions import SubscriptionView, send_pending_notifications
 from datetime import datetime, time as dt_time
 
 from database import (
@@ -119,6 +120,7 @@ async def on_message(message):
             return
 
         x, y = coords
+        ensure_user_registered(message.author)
         is_first = add_trader_report(server, location_name, x, y, message.author.id)
         status = "Вы первый сообщили" if is_first else "Ваше сообщение обновлено"
         await message.reply(
@@ -140,12 +142,20 @@ async def on_ready():
     print("База данных инициализирована")
 
     # Запуск задачи архивирования (04:00 MSK = 01:00 UTC)
-    archive_daily.start()
+    if not archive_daily.is_running():
+        archive_daily.start()
+    if not subscription_notifications.is_running():
+        subscription_notifications.start()
     print("Задача ежедневного архивирования запущена")
 
     # Регистрация persistent views (работают после перезапуска)
     bot.add_view(MainMenuV2View())
     print("Persistent views зарегистрированы")
+
+
+@tasks.loop(seconds=10)
+async def subscription_notifications():
+    await send_pending_notifications(bot)
 
 
 @tasks.loop(minutes=1)
@@ -220,10 +230,21 @@ class MainMenuV2View(discord.ui.LayoutView):
             custom_id="main_menu_help",
         )
         share = discord.ui.Button(
-            label="Пригласить",
+            label="Добавить себе или поделиться",
             style=discord.ButtonStyle.secondary,
             custom_id="main_menu_share_bot",
         )
+        subscriptions = discord.ui.Button(
+            label="Подписки",
+            style=discord.ButtonStyle.secondary,
+            custom_id="main_menu_subscriptions",
+        )
+
+        async def show_subscriptions(interaction: discord.Interaction):
+            ensure_user_registered(interaction.user)
+            await interaction.response.send_message(
+                view=SubscriptionView(interaction.user.id), ephemeral=True
+            )
 
         async def start_search(interaction: discord.Interaction):
             ensure_user_registered(interaction.user)
@@ -240,12 +261,14 @@ class MainMenuV2View(discord.ui.LayoutView):
         trader.callback = check_trader
         help_button.callback = help_info
         share.callback = show_bot_invite
+        subscriptions.callback = show_subscriptions
 
         container = discord.ui.Container(
             discord.ui.TextDisplay("# 🕵️ Бродячий торговец"),
             discord.ui.TextDisplay("Выберите действие:"),
             discord.ui.ActionRow(search, trader),
-            discord.ui.ActionRow(help_button, share),
+            discord.ui.ActionRow(subscriptions, help_button),
+            discord.ui.ActionRow(share),
         )
         self.add_item(container)
 

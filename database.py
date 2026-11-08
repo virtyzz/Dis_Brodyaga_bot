@@ -1,5 +1,6 @@
 import sqlite3
 import os
+from contextlib import closing
 from datetime import datetime
 
 # Определяем директорию для БД
@@ -71,8 +72,92 @@ def init_database():
         ON location_checks(server, location_name)
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS server_subscriptions (
+            user_id BIGINT NOT NULL,
+            server VARCHAR(20) NOT NULL,
+            PRIMARY KEY (user_id, server)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trader_notification_events (
+            server VARCHAR(20) NOT NULL,
+            location_name VARCHAR(50) NOT NULL,
+            PRIMARY KEY (server, location_name)
+        )
+    """)
+    # Existing reports are already known, so enabling this feature must not
+    # cause an old location to be broadcast on the next confirmation.
+    cursor.execute("""
+        INSERT OR IGNORE INTO trader_notification_events (server, location_name)
+        SELECT DISTINCT server, location_name FROM trader_reports
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS trader_notifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id BIGINT NOT NULL,
+            server VARCHAR(20) NOT NULL,
+            location_name VARCHAR(50) NOT NULL,
+            x_coord INTEGER NOT NULL,
+            y_coord INTEGER NOT NULL,
+            status VARCHAR(20) NOT NULL DEFAULT 'pending',
+            attempts INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_trader_notifications_status
+        ON trader_notifications(status, id)
+    """)
+
     conn.commit()
     conn.close()
+
+
+def get_subscriptions(user_id: int) -> set[str]:
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        return {row[0] for row in conn.execute(
+            "SELECT server FROM server_subscriptions WHERE user_id = ?", (user_id,)
+        )}
+
+
+def set_subscriptions(user_id: int, servers):
+    """Replace a user's selection atomically; remove obsolete pending DMs."""
+    from coords_handler import SERVERS
+    servers = set(servers)
+    if not servers.issubset(SERVERS):
+        raise ValueError("Unknown subscription server")
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("DELETE FROM server_subscriptions WHERE user_id = ?", (user_id,))
+        conn.executemany(
+            "INSERT INTO server_subscriptions (user_id, server) VALUES (?, ?)",
+            [(user_id, server) for server in servers],
+        )
+        conn.execute("""
+            DELETE FROM trader_notifications WHERE user_id = ? AND NOT EXISTS (
+                SELECT 1 FROM server_subscriptions s
+                WHERE s.user_id = trader_notifications.user_id
+                AND s.server = trader_notifications.server
+            )
+        """, (user_id,))
+
+
+def get_pending_notifications(limit: int = 20):
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        return conn.execute("""
+            SELECT id, user_id, server, location_name, x_coord, y_coord
+            FROM trader_notifications WHERE status = 'pending'
+            ORDER BY id LIMIT ?
+        """, (limit,)).fetchall()
+
+
+def finish_notification(notification_id: int, status: str):
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("""
+            UPDATE trader_notifications SET attempts = attempts + 1,
+                status = CASE WHEN ? = 'pending' AND attempts >= 2
+                              THEN 'failed' ELSE ? END
+            WHERE id = ?
+        """, (status, status, notification_id))
 
 
 def register_user(user_id: int, username: str):
@@ -111,6 +196,7 @@ def add_trader_report(
     """Добавление или обновление отчета (1 голос = 1 пользователь на сервере)"""
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
+    cursor.execute("BEGIN IMMEDIATE")
 
     # Проверяем, есть ли уже запись этого пользователя на этом сервере
     cursor.execute(
@@ -159,6 +245,19 @@ def add_trader_report(
         "DELETE FROM location_checks WHERE server = ? AND location_name = ?",
         (server, location_name),
     )
+
+    # One event per point per daily cycle, including when all votes move away
+    # and return. Queue recipients in the same transaction as the report.
+    cursor.execute(
+        "INSERT OR IGNORE INTO trader_notification_events (server, location_name) VALUES (?, ?)",
+        (server, location_name),
+    )
+    if cursor.rowcount:
+        cursor.execute("""
+            INSERT INTO trader_notifications
+                (user_id, server, location_name, x_coord, y_coord)
+            SELECT user_id, server, ?, ?, ? FROM server_subscriptions WHERE server = ?
+        """, (location_name, x_coord, y_coord, server))
 
     conn.commit()
     conn.close()
@@ -333,6 +432,8 @@ def archive_reports():
 
     cursor.execute("DELETE FROM trader_reports")
     cursor.execute("DELETE FROM location_checks")
+    cursor.execute("DELETE FROM trader_notification_events")
+    cursor.execute("DELETE FROM trader_notifications")
 
     conn.commit()
     conn.close()
