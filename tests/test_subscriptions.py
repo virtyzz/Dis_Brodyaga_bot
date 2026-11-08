@@ -140,6 +140,54 @@ class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
             "Это не ваше меню.", ephemeral=True
         )
 
+    async def test_cancel_acknowledges_before_reading_database(self):
+        db.set_subscriptions(1, [SERVERS[1]])
+        view = SubscriptionView(1, [self.server])
+        interaction = self.interaction()
+
+        def read_after_ack(user_id):
+            interaction.response.defer.assert_awaited_once()
+            return db.get_subscriptions(user_id)
+
+        with patch("subscriptions.get_subscriptions", side_effect=read_after_ack):
+            await view.cancel(interaction)
+        result = interaction.edit_original_response.call_args.kwargs["view"]
+        self.assertEqual(result.selected, {SERVERS[1]})
+        self.assertEqual(db.get_subscriptions(1), {SERVERS[1]})
+        interaction.response.edit_message.assert_not_awaited()
+
+    async def test_select_acknowledges_before_reading_database(self):
+        view = SubscriptionView(1)
+        select = view.children[0].children[2].children[0]
+        select._values = [self.server]
+        interaction = self.interaction()
+
+        def read_after_ack(user_id):
+            interaction.response.defer.assert_awaited_once()
+            return db.get_subscriptions(user_id)
+
+        with patch("subscriptions.get_subscriptions", side_effect=read_after_ack):
+            await select.callback(interaction)
+        result = interaction.edit_original_response.call_args.kwargs["view"]
+        self.assertEqual(result.selected, {self.server})
+        self.assertEqual(db.get_subscriptions(1), set())
+        interaction.response.edit_message.assert_not_awaited()
+
+    async def test_open_subscriptions_acknowledges_before_registration(self):
+        with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "test-placeholder"}):
+            import main
+        view = main.MainMenuV2View()
+        button = view.children[0].children[3].children[0]
+        interaction = self.interaction()
+
+        def register_after_ack(user):
+            interaction.response.defer.assert_awaited_once_with(ephemeral=True, thinking=True)
+
+        with patch.object(main, "ensure_user_registered", side_effect=register_after_ack):
+            await button.callback(interaction)
+        interaction.edit_original_response.assert_awaited_once()
+        interaction.response.send_message.assert_not_awaited()
+
     async def test_delivery_continues_after_closed_dm_and_does_not_resend(self):
         db.set_subscriptions(1, [self.server])
         db.set_subscriptions(2, [self.server])

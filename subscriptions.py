@@ -51,7 +51,8 @@ class SubscriptionView(discord.ui.LayoutView):
         )
 
         async def select_servers(interaction: discord.Interaction):
-            await interaction.response.edit_message(
+            await interaction.response.defer()
+            await interaction.edit_original_response(
                 view=SubscriptionView(self.user_id, select.values)
             )
 
@@ -126,7 +127,10 @@ class SubscriptionView(discord.ui.LayoutView):
             ))
 
     async def cancel(self, interaction: discord.Interaction):
-        await interaction.response.edit_message(view=SubscriptionView(
+        # Acknowledge before rebuilding the view (which reads SQLite).
+        # Discord invalidates an interaction if its initial response is late.
+        await interaction.response.defer()
+        await interaction.edit_original_response(view=SubscriptionView(
             self.user_id, notice="Несохранённые изменения отменены."
         ))
 

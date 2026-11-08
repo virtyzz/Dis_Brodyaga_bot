@@ -241,9 +241,10 @@ class MainMenuV2View(discord.ui.LayoutView):
         )
 
         async def show_subscriptions(interaction: discord.Interaction):
+            await interaction.response.defer(ephemeral=True, thinking=True)
             ensure_user_registered(interaction.user)
-            await interaction.response.send_message(
-                view=SubscriptionView(interaction.user.id), ephemeral=True
+            await interaction.edit_original_response(
+                view=SubscriptionView(interaction.user.id)
             )
 
         async def start_search(interaction: discord.Interaction):
