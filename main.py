@@ -9,6 +9,7 @@ import re
 import time
 import pytz
 from subscriptions import SubscriptionView, send_pending_notifications
+from interaction_utils import acknowledge
 from datetime import datetime, time as dt_time
 
 from database import (
@@ -114,11 +115,6 @@ def format_reporters(usernames, limit: int = 10) -> str:
     if remaining:
         shown.append(f"ещё {remaining} игроков")
     return ", ".join(shown) or "нет"
-
-
-async def acknowledge(interaction, *, ephemeral=False, thinking=False):
-    if not interaction.response.is_done():
-        await interaction.response.defer(ephemeral=ephemeral, thinking=thinking)
 
 
 async def edit_interaction_message(interaction, **kwargs):
@@ -248,9 +244,7 @@ def has_component_handler(client, interaction) -> bool:
     # Older supported discord.py releases also keyed ephemeral views by the
     # original interaction id until their message id became known.
     metadata = getattr(message, "interaction_metadata", None)
-    legacy = getattr(message, "interaction", None)
-    identifiers = (message_id, getattr(metadata, "id", None),
-                   getattr(legacy, "id", None), None)
+    identifiers = (message_id, getattr(metadata, "id", None), None)
     if any(key in store._views.get(identifier, {}) for identifier in identifiers):
         return True
     return any(pattern.fullmatch(key[1] or "") for pattern in store._dynamic_items)
@@ -264,7 +258,8 @@ async def on_interaction(interaction: discord.Interaction):
         return
     # Never replay a stale save/confirmation: its unsaved state is gone.
     # Give the clicker a fresh private menu instead of leaving the click unanswered.
-    await acknowledge(interaction, ephemeral=True, thinking=True)
+    if not await acknowledge(interaction, ephemeral=True, thinking=True):
+        return
     menu = MainMenuV2View()
     menu.children[0].add_item(discord.ui.TextDisplay(
         "Предыдущее окно устарело после перезапуска или истечения времени. "
@@ -318,7 +313,8 @@ def ensure_user_registered(user: discord.User) -> bool:
 @database_action
 async def send_main_menu(interaction: discord.Interaction):
     """Send the persistent Components V2 main menu."""
-    await acknowledge(interaction, ephemeral=False, thinking=True)
+    if not await acknowledge(interaction, ephemeral=False, thinking=True):
+        return
     await asyncio.to_thread(ensure_user_registered, interaction.user)
     await send_interaction_message(interaction, view=MainMenuV2View())
 
@@ -365,7 +361,8 @@ class MainMenuV2View(discord.ui.LayoutView):
 
         @database_action
         async def show_subscriptions(interaction: discord.Interaction):
-            await acknowledge(interaction, ephemeral=True, thinking=True)
+            if not await acknowledge(interaction, ephemeral=True, thinking=True):
+                return
             await asyncio.to_thread(ensure_user_registered, interaction.user)
             await interaction.edit_original_response(
                 view=await SubscriptionView.create(interaction.user.id)
@@ -373,13 +370,15 @@ class MainMenuV2View(discord.ui.LayoutView):
 
         @database_action
         async def start_search(interaction: discord.Interaction):
-            await acknowledge(interaction, ephemeral=True, thinking=True)
+            if not await acknowledge(interaction, ephemeral=True, thinking=True):
+                return
             await asyncio.to_thread(ensure_user_registered, interaction.user)
             await start_location_status(interaction, show_progress=True)
 
         @database_action
         async def check_trader(interaction: discord.Interaction):
-            await acknowledge(interaction, ephemeral=True, thinking=True)
+            if not await acknowledge(interaction, ephemeral=True, thinking=True):
+                return
             await asyncio.to_thread(ensure_user_registered, interaction.user)
             await show_trader_locations(interaction)
 
@@ -444,7 +443,8 @@ async def show_help(interaction: discord.Interaction):
 @database_action
 async def show_trader_locations(interaction: discord.Interaction):
     """Show trader reports in one navigable Components V2 result screen."""
-    await acknowledge(interaction, ephemeral=True, thinking=True)
+    if not await acknowledge(interaction, ephemeral=True, thinking=True):
+        return
     await send_interaction_message(interaction,
         view=await TraderLocationsV2View.create(interaction.user.id), ephemeral=True
     )
@@ -455,7 +455,8 @@ async def show_trader_locations_detail(
     interaction: discord.Interaction, selected_server: str | None = None
 ):
     """Show reports for one server or, by default, all servers."""
-    await acknowledge(interaction, ephemeral=True, thinking=True)
+    if not await acknowledge(interaction, ephemeral=True, thinking=True):
+        return
     reports = await asyncio.to_thread(get_trader_reports, )
 
     if not reports:
@@ -752,7 +753,8 @@ class TraderReportConfirmationView(discord.ui.LayoutView):
 
     @database_action
     async def _confirm_callback(self, interaction: discord.Interaction):
-        await acknowledge(interaction, ephemeral=False, thinking=False)
+        if not await acknowledge(interaction, ephemeral=False, thinking=False):
+            return
         coords = get_location_coords(self.location_name)
         if not coords:
             notice = f"Не удалось найти координаты: {self.location_name}"
@@ -771,7 +773,8 @@ class TraderReportConfirmationView(discord.ui.LayoutView):
 
     @database_action
     async def _cancel_callback(self, interaction: discord.Interaction):
-        await acknowledge(interaction, ephemeral=False, thinking=False)
+        if not await acknowledge(interaction, ephemeral=False, thinking=False):
+            return
         await edit_interaction_message(interaction,
             view=await TraderLocationsV2View.create(self.user_id, self.return_page)
         )
@@ -878,7 +881,8 @@ class TraderLocationsV2View(discord.ui.LayoutView):
             if interaction.user.id != self.user_id:
                 await send_interaction_message(interaction, "Это не ваше меню.", ephemeral=True)
                 return
-            await acknowledge(interaction, ephemeral=False, thinking=False)
+            if not await acknowledge(interaction, ephemeral=False, thinking=False):
+                return
             await edit_interaction_message(interaction,
                 view=await TraderLocationsV2View.create(self.user_id, self.page + step)
             )
@@ -894,7 +898,8 @@ class TraderLocationsV2View(discord.ui.LayoutView):
             if interaction.user.id != self.user_id:
                 await send_interaction_message(interaction, "Это не ваше меню.", ephemeral=True)
                 return
-            await acknowledge(interaction, ephemeral=False, thinking=False)
+            if not await acknowledge(interaction, ephemeral=False, thinking=False):
+                return
             await edit_interaction_message(interaction,
                 view=await TraderLocationsV2View.create(self.user_id, self.page)
             )
@@ -987,7 +992,8 @@ class ServerSelectView(discord.ui.View):
 @database_action
 async def start_search_flow(interaction: discord.Interaction):
     """Show per-server search progress, then start the detailed selection flow."""
-    await acknowledge(interaction, ephemeral=True, thinking=True)
+    if not await acknowledge(interaction, ephemeral=True, thinking=True):
+        return
     clean_expired_user_states()
     user_states[interaction.user.id] = {
         "flow": "search",
@@ -1074,7 +1080,8 @@ class WithdrawCheckView(discord.ui.View):
         if interaction.user.id != self.user_id:
             await send_interaction_message(interaction, "Это не ваша отметка.", ephemeral=True)
             return
-        await acknowledge(interaction, ephemeral=False, thinking=False)
+        if not await acknowledge(interaction, ephemeral=False, thinking=False):
+            return
         removed = await asyncio.to_thread(remove_location_check, self.server, self.location_name, self.user_id)
         for item in self.children:
             item.disabled = True
@@ -1085,7 +1092,8 @@ class WithdrawCheckView(discord.ui.View):
 @database_action
 async def process_location_check(interaction: discord.Interaction, location_name: str):
     """Persist a 'not found' marker after the player chose the exact location."""
-    await acknowledge(interaction, ephemeral=True, thinking=True)
+    if not await acknowledge(interaction, ephemeral=True, thinking=True):
+        return
     state = user_states.get(interaction.user.id)
     if not state:
         await send_interaction_message(interaction, "Время выбора истекло. Начните поиск заново.", ephemeral=True)
@@ -1115,7 +1123,8 @@ async def process_location_check(interaction: discord.Interaction, location_name
         )
         view = None
 
-    await acknowledge(interaction, ephemeral=True)
+    if not await acknowledge(interaction, ephemeral=True):
+        return
     await interaction.followup.send(embed=embed, view=view, ephemeral=True)
 
 
@@ -1173,7 +1182,8 @@ def make_location_select_view(user_id: int, server: str, locations: list):
                         if screenshot and os.path.exists(screenshot):
                             file = discord.File(screenshot, filename="preview.png")
                             embed.set_image(url="attachment://preview.png")
-                            await acknowledge(interaction, ephemeral=True)
+                            if not await acknowledge(interaction, ephemeral=True):
+                                return
                             await interaction.followup.send(embed=embed, view=view, file=file, ephemeral=True)
                         else:
                             await edit_interaction_message(interaction, embed=embed, view=view)
@@ -1264,7 +1274,8 @@ class BuildingSelectView(discord.ui.View):
         if screenshot and os.path.exists(screenshot):
             file = discord.File(screenshot, filename=f"preview.png")
             embed.set_image(url="attachment://preview.png")
-            await acknowledge(interaction, ephemeral=True)
+            if not await acknowledge(interaction, ephemeral=True):
+                return
             await interaction.followup.send(embed=embed, view=self, file=file, ephemeral=True)
         else:
             await edit_interaction_message(interaction, embed=embed, view=self)
@@ -1284,7 +1295,8 @@ class BuildingSelectView(discord.ui.View):
 @database_action
 async def process_report(interaction: discord.Interaction, location_name: str):
     """Обработка и сохранение отчета о торговце"""
-    await acknowledge(interaction, ephemeral=True, thinking=True)
+    if not await acknowledge(interaction, ephemeral=True, thinking=True):
+        return
     server = user_states[interaction.user.id]["server"]
 
     # Получаем координаты
@@ -1340,10 +1352,12 @@ async def process_report(interaction: discord.Interaction, location_name: str):
     if screenshot and os.path.exists(screenshot):
         file = discord.File(screenshot, filename=f"{location_name}.png")
         embed.set_image(url=f"attachment://{location_name}.png")
-        await acknowledge(interaction, ephemeral=True)
+        if not await acknowledge(interaction, ephemeral=True):
+            return
         await interaction.followup.send(embed=embed, file=file, ephemeral=True)
     else:
-        await acknowledge(interaction, ephemeral=True)
+        if not await acknowledge(interaction, ephemeral=True):
+            return
         await interaction.followup.send(embed=embed, ephemeral=True)
 
 
@@ -1412,7 +1426,8 @@ class LocationStatusActionButton(discord.ui.Button):
         if interaction.user.id != self.user_id:
             await send_interaction_message(interaction, "Это не ваше меню.", ephemeral=True)
             return
-        await acknowledge(interaction, ephemeral=False, thinking=False)
+        if not await acknowledge(interaction, ephemeral=False, thinking=False):
+            return
         if self.action == "cancel":
             await asyncio.to_thread(remove_location_check, self.server, self.location_name, self.user_id)
             notice = f"Отметка отменена: {self.location_name}"
@@ -1495,7 +1510,8 @@ class TraderConfirmationView(discord.ui.LayoutView):
 
     @database_action
     async def _confirm_callback(self, interaction: discord.Interaction):
-        await acknowledge(interaction, ephemeral=False, thinking=False)
+        if not await acknowledge(interaction, ephemeral=False, thinking=False):
+            return
         coords = get_location_coords(self.location_name)
         if not coords:
             notice = f"Не удалось найти координаты: {self.location_name}"
@@ -1516,7 +1532,8 @@ class TraderConfirmationView(discord.ui.LayoutView):
 
     @database_action
     async def _cancel_callback(self, interaction: discord.Interaction):
-        await acknowledge(interaction, ephemeral=False, thinking=False)
+        if not await acknowledge(interaction, ephemeral=False, thinking=False):
+            return
         await edit_interaction_message(interaction,
             view=await LocationStatusV2View.create(self.user_id, self.server, self.return_page)
         )
@@ -1657,7 +1674,8 @@ class LocationStatusV2View(discord.ui.LayoutView):
         if interaction.user.id != self.user_id:
             await send_interaction_message(interaction, "Это не ваше меню.", ephemeral=True)
             return
-        await acknowledge(interaction, ephemeral=False, thinking=False)
+        if not await acknowledge(interaction, ephemeral=False, thinking=False):
+            return
         await edit_interaction_message(interaction,
             view=await LocationStatusV2View.create(
                 self.user_id, self.server, self.page if page is None else page, notice
@@ -1736,7 +1754,8 @@ class SearchServerSelectV2View(discord.ui.LayoutView):
             if interaction.user.id != self.user_id:
                 await send_interaction_message(interaction, "Это не ваше меню.", ephemeral=True)
                 return
-            await acknowledge(interaction, ephemeral=False, thinking=False)
+            if not await acknowledge(interaction, ephemeral=False, thinking=False):
+                return
             await edit_interaction_message(interaction,
                 view=await LocationStatusV2View.create(self.user_id, select.values[0])
             )
@@ -1748,7 +1767,8 @@ class SearchServerSelectV2View(discord.ui.LayoutView):
 
 @database_action
 async def start_location_status(interaction: discord.Interaction, show_progress: bool = False):
-    await acknowledge(interaction, ephemeral=True, thinking=True)
+    if not await acknowledge(interaction, ephemeral=True, thinking=True):
+        return
     await send_interaction_message(interaction,
         view=await SearchServerSelectV2View.create(interaction.user.id, show_progress),
         ephemeral=True,

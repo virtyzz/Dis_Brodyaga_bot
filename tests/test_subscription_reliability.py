@@ -6,7 +6,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import database as db
 import subscriptions as sub
@@ -32,7 +32,7 @@ class SubscriptionReliabilityTests(unittest.IsolatedAsyncioTestCase):
     def interaction(self, uid, send=None):
         return SimpleNamespace(
             user=SimpleNamespace(id=uid, send=send or AsyncMock()),
-            response=SimpleNamespace(defer=AsyncMock()),
+            response=SimpleNamespace(defer=AsyncMock(), is_done=Mock(return_value=False)),
             edit_original_response=AsyncMock(),
         )
 

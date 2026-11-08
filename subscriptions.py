@@ -6,6 +6,7 @@ import sqlite3
 from weakref import WeakValueDictionary
 
 import discord
+from interaction_utils import acknowledge
 
 from coords_handler import SERVERS, get_server_display_name, get_brodyaga_map_url
 from database import (
@@ -66,7 +67,8 @@ class SubscriptionView(discord.ui.LayoutView):
         )
 
         async def select_servers(interaction: discord.Interaction):
-            await interaction.response.defer()
+            if not await acknowledge(interaction):
+                return
             try:
                 await interaction.edit_original_response(
                     view=await SubscriptionView.create(self.user_id, select.values)
@@ -116,7 +118,8 @@ class SubscriptionView(discord.ui.LayoutView):
         return True
 
     async def save(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        if not await acknowledge(interaction):
+            return
         try:
             await self._save(interaction)
         except sqlite3.Error:
@@ -163,7 +166,8 @@ class SubscriptionView(discord.ui.LayoutView):
             ))
 
     async def unsubscribe(self, interaction: discord.Interaction):
-        await interaction.response.defer()
+        if not await acknowledge(interaction):
+            return
         try:
             async with _user_lock(self.user_id):
                 await asyncio.to_thread(set_subscriptions, self.user_id, [])
@@ -177,7 +181,8 @@ class SubscriptionView(discord.ui.LayoutView):
     async def cancel(self, interaction: discord.Interaction):
         # Acknowledge before rebuilding the view (which reads SQLite).
         # Discord invalidates an interaction if its initial response is late.
-        await interaction.response.defer()
+        if not await acknowledge(interaction):
+            return
         try:
             await interaction.edit_original_response(view=await SubscriptionView.create(
                 self.user_id, notice="Несохранённые изменения отменены."
