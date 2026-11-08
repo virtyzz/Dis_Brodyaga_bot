@@ -8,7 +8,7 @@ import os
 import re
 import time
 import pytz
-from subscriptions import SubscriptionView, send_pending_notifications
+from subscriptions import SubscriptionView, send_pending_notifications, register_notification_views
 from interaction_utils import acknowledge
 from datetime import datetime, time as dt_time
 
@@ -75,6 +75,7 @@ class BrodyagaBot(commands.Bot):
         await asyncio.to_thread(init_database)
         await asyncio.to_thread(ensure_current_cycle)
         self.add_view(MainMenuV2View())
+        register_notification_views(self)
         logger.info("Database and persistent menu initialized")
 
 

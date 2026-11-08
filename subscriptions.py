@@ -8,7 +8,10 @@ from weakref import WeakValueDictionary
 import discord
 from interaction_utils import acknowledge
 
-from coords_handler import SERVERS, get_server_display_name, get_brodyaga_map_url
+from coords_handler import (
+    SERVERS, get_server_display_name, get_brodyaga_map_url,
+    get_all_locations, get_screenshot_path,
+)
 from database import (
     get_subscriptions, set_subscriptions,
     get_pending_notifications, finish_notification,
@@ -204,6 +207,61 @@ class SubscriptionConfirmationView(discord.ui.LayoutView):
         )))
 
 
+class NotificationSubscriptionsButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(label="Подписки", style=discord.ButtonStyle.secondary,
+                         custom_id="trader_notification_subscriptions")
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await acknowledge(interaction, ephemeral=interaction.guild is not None, thinking=True):
+            return
+        try:
+            menu = await SubscriptionView.create(interaction.user.id)
+        except sqlite3.Error:
+            logger.exception("Cannot open subscriptions from notification")
+            await interaction.edit_original_response(
+                content="База данных временно недоступна. Нажмите «Подписки» ещё раз чуть позже."
+            )
+            return
+        # A thinking response is a new message: retain the original alert and
+        # its photo/map buttons while opening this user's subscription menu.
+        await interaction.edit_original_response(view=menu)
+
+
+class NotificationPhotoButton(discord.ui.Button):
+    def __init__(self, location: str):
+        super().__init__(label="Фото", style=discord.ButtonStyle.secondary,
+                         custom_id=f"trader_notification_photo:{location}")
+        self.location = location
+
+    async def callback(self, interaction: discord.Interaction):
+        if not await acknowledge(interaction, ephemeral=interaction.guild is not None, thinking=True):
+            return
+        screenshot = await asyncio.to_thread(get_screenshot_path, self.location)
+        if not screenshot:
+            await interaction.edit_original_response(content=f"Для {self.location} нет изображения.")
+            return
+        try:
+            file = discord.File(screenshot, filename="location-preview.png")
+            try:
+                await interaction.edit_original_response(content=self.location, attachments=[file])
+            finally:
+                file.close()
+        except OSError:
+            logger.exception("Cannot read notification photo for %s", self.location)
+            await interaction.edit_original_response(content="Не удалось открыть фото. Попробуйте чуть позже.")
+
+
+def register_notification_views(bot):
+    """Restore stateless shortcuts on alerts sent by previous bot processes."""
+    controls = [NotificationSubscriptionsButton()]
+    controls.extend(NotificationPhotoButton(location) for location in get_all_locations())
+    for button in controls:
+        view = discord.ui.View(timeout=None)
+        view.add_item(button)
+        bot.add_view(view)
+
+
 class TraderNotificationView(discord.ui.LayoutView):
     def __init__(self, server: str, location: str, x: int, y: int):
         super().__init__(timeout=None)
@@ -211,15 +269,16 @@ class TraderNotificationView(discord.ui.LayoutView):
             "# Сообщили о бродяге\n"
             f"**Сервер:** {get_server_display_name(server)}\n"
             f"**Локация:** {location}\n"
-            f"**Координаты:** X: {x}, Y: {y}\n\n"
-            "Это отметка игрока. Управление уведомлениями — в разделе "
-            "«Подписки» главного меню бота."
+            f"**Координаты:** X: {x}, Y: {y}"
         ))
+        actions = [NotificationPhotoButton(location)]
         map_url = get_brodyaga_map_url(location)
         if map_url:
-            container.add_item(discord.ui.ActionRow(discord.ui.Button(
+            actions.append(discord.ui.Button(
                 label="На карте", style=discord.ButtonStyle.link, url=map_url,
-            )))
+            ))
+        actions.append(NotificationSubscriptionsButton())
+        container.add_item(discord.ui.ActionRow(*actions))
         self.add_item(container)
 
 
