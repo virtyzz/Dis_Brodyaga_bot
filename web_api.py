@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import secrets
+import sqlite3
 import time
 import urllib.error
 import urllib.parse
@@ -19,7 +20,10 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from coords_handler import SERVERS, get_all_locations, get_location_coords
-from database import add_trader_report, get_trader_report_summary, init_database, register_user
+from database import (
+    add_trader_report, get_trader_report_summary, init_database, register_user,
+    ReportCooldownError,
+)
 
 
 logging.basicConfig(level=logging.INFO)
@@ -50,10 +54,8 @@ CORS_ORIGINS = {
 COOKIE_NAME = "brodyaga_session"
 STATE_TTL = 600
 SESSION_TTL = 7 * 24 * 3600
-REPORT_COOLDOWN = 30
 OAUTH_STATES: dict[str, dict] = {}
 SESSIONS: dict[str, dict] = {}
-LAST_REPORTS: dict[tuple[str, str], float] = {}
 
 
 def json_request(url: str, *, data: dict | None = None, headers: dict | None = None) -> dict:
@@ -164,7 +166,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def send_reports(self) -> None:
-        reports = [{"server": server, "location_name": location, "x": x, "y": y, "confirmations": count} for server, location, x, y, count in get_trader_report_summary()]
+        try:
+            reports = [{"server": server, "location_name": location, "x": x, "y": y, "confirmations": count} for server, location, x, y, count in get_trader_report_summary()]
+        except sqlite3.Error:
+            LOGGER.exception("Cannot load trader reports")
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Reports are temporarily unavailable"})
+            return
         self.send_json(HTTPStatus.OK, {"ok": True, "reports": reports})
 
     def create_report(self) -> None:
@@ -186,18 +193,24 @@ class ApiHandler(BaseHTTPRequestHandler):
         if server not in SERVERS or not 1 <= location_id <= len(locations):
             self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Unknown server or location"})
             return
-        rate_key = (session["user_id"], server)
-        if time.time() - LAST_REPORTS.get(rate_key, 0) < REPORT_COOLDOWN:
-            self.send_json(HTTPStatus.TOO_MANY_REQUESTS, {"ok": False, "error": "Please wait before sending another report"})
-            return
         location = locations[location_id - 1]
         coords = get_location_coords(location)
         if not coords:
             self.send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"ok": False, "error": "Location coordinates are unavailable"})
             return
-        register_user(int(session["user_id"]), session["username"])
-        first = add_trader_report(server, location, coords[0], coords[1], int(session["user_id"]))
-        LAST_REPORTS[rate_key] = time.time()
+        try:
+            register_user(int(session["user_id"]), session["username"])
+            first = add_trader_report(server, location, coords[0], coords[1], int(session["user_id"]))
+        except ReportCooldownError as error:
+            self.send_json(HTTPStatus.TOO_MANY_REQUESTS, {
+                "ok": False, "error": "Please wait before changing the trader location",
+                "retry_after": error.retry_after,
+            })
+            return
+        except sqlite3.Error:
+            LOGGER.exception("Cannot save trader report")
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Reports are temporarily unavailable"})
+            return
         self.send_json(HTTPStatus.OK, {"ok": True, "is_first": first, "location_name": location, "server": server})
 
     def get_session(self) -> dict | None:

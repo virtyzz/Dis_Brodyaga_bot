@@ -5,7 +5,7 @@ import unittest
 from contextlib import closing
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import discord
 import database as db
@@ -18,11 +18,14 @@ class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.path_patch = patch.object(db, "DB_PATH", str(Path(self.temp.name) / "test.db"))
         self.path_patch.start()
+        self.cooldown_patch = patch.object(db, "REPORT_COOLDOWN_SECONDS", 0)
+        self.cooldown_patch.start()
         db.init_database()
         self.server = SERVERS[0]
         self.location = get_all_locations()[0]
 
     def tearDown(self):
+        self.cooldown_patch.stop()
         self.path_patch.stop()
         self.temp.cleanup()
 
@@ -32,9 +35,13 @@ class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
         )
 
     def interaction(self, send_error=None):
+        state = {"done": False}
+        def defer(**kwargs):
+            state["done"] = True
         return SimpleNamespace(
             user=SimpleNamespace(id=1, send=AsyncMock(side_effect=send_error)),
-            response=SimpleNamespace(defer=AsyncMock(), send_message=AsyncMock(),
+            response=SimpleNamespace(defer=AsyncMock(side_effect=defer),
+                                     is_done=Mock(side_effect=lambda: state["done"]), send_message=AsyncMock(),
                                      edit_message=AsyncMock()),
             edit_original_response=AsyncMock(),
         )
@@ -62,7 +69,11 @@ class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
         self.report()
         self.report(get_all_locations()[1])
         self.report()
-        self.assertEqual(len(db.get_pending_notifications()), 2)
+        # The abandoned point is no longer eligible for delivery. The event
+        # ledger still has exactly two entries, with no third event on return.
+        self.assertEqual(len(db.get_pending_notifications()), 1)
+        with closing(sqlite3.connect(db.DB_PATH)) as conn:
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trader_notification_events").fetchone()[0], 2)
 
     async def test_daily_reset_preserves_subscriptions_and_allows_new_alert(self):
         db.set_subscriptions(1, [self.server])
@@ -202,15 +213,18 @@ class SubscriptionTests(unittest.IsolatedAsyncioTestCase):
         available.send.assert_awaited_once()
         self.assertEqual(db.get_pending_notifications(), [])
 
-    async def test_temporary_delivery_errors_stop_after_three_attempts(self):
+    async def test_temporary_delivery_errors_remain_queued_with_backoff(self):
         db.set_subscriptions(1, [self.server])
         self.report()
         user = SimpleNamespace(send=AsyncMock(side_effect=OSError("Offline")))
         bot = SimpleNamespace(get_user=lambda uid: user)
         for _ in range(4):
             await send_pending_notifications(bot)
-        self.assertEqual(user.send.await_count, 3)
+        self.assertEqual(user.send.await_count, 1)
         self.assertEqual(db.get_pending_notifications(), [])
+        with closing(sqlite3.connect(db.DB_PATH)) as conn:
+            row = conn.execute("SELECT status, attempts FROM trader_notifications").fetchone()
+        self.assertEqual(row, ("pending", 1))
 
     async def test_main_menu_layout_and_component_limits(self):
         with patch.dict(os.environ, {"DISCORD_BOT_TOKEN": "test-placeholder"}):

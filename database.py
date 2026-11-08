@@ -1,117 +1,215 @@
 import sqlite3
 import os
+import math
 from contextlib import closing
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 # Определяем директорию для БД
 DB_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(DB_DIR, exist_ok=True)
 DB_PATH = os.path.join(DB_DIR, "bot_database.db")
+REPORT_COOLDOWN_SECONDS = 60
+
+
+class ReportCooldownError(ValueError):
+    def __init__(self, retry_after: int):
+        self.retry_after = retry_after
+        super().__init__(f"Подождите {retry_after} сек. перед сменой локации на этом сервере.")
+
+
+def _utc_now(now=None):
+    now = now or datetime.now(timezone.utc)
+    return now.replace(tzinfo=timezone.utc) if now.tzinfo is None else now.astimezone(timezone.utc)
+
+
+def _cycle_start(now=None):
+    now = _utc_now(now)
+    boundary = now.replace(hour=1, minute=0, second=0, microsecond=0)
+    return boundary if now >= boundary else boundary - timedelta(days=1)
+
+
+def _archive(cursor, now):
+    cursor.execute("""
+        INSERT INTO trader_history (server, location_name, x_coord, y_coord, reporter_id,
+                                    report_date, is_first_reporter, archived_at)
+        SELECT server, location_name, x_coord, y_coord, reporter_id, report_date,
+               is_first_reporter, ? FROM trader_reports
+    """, (_utc_now(now).replace(tzinfo=None),))
+    for table in ("trader_reports", "location_checks", "trader_notification_events",
+                  "trader_notifications", "report_cooldowns"):
+        cursor.execute(f"DELETE FROM {table}")
+
+
+def _ensure_cycle(cursor, now=None):
+    now = _utc_now(now)
+    cycle = _cycle_start(now).isoformat()
+    row = cursor.execute("SELECT value FROM bot_state WHERE key = 'cycle_start'").fetchone()
+    if row is None:
+        # During the upgrade infer stale legacy data before initializing the
+        # persisted boundary; never broadcast yesterday's existing reports.
+        oldest = cursor.execute("""
+            SELECT MIN(stamp) FROM (
+                SELECT report_date AS stamp FROM trader_reports
+                UNION ALL SELECT checked_at AS stamp FROM location_checks
+            )
+        """).fetchone()[0]
+        stale = False
+        if oldest:
+            try:
+                stale = _utc_now(datetime.fromisoformat(str(oldest))) < _cycle_start(now)
+            except ValueError:
+                stale = True
+        if stale:
+            _archive(cursor, now)
+        cursor.execute("INSERT INTO bot_state (key, value) VALUES ('cycle_start', ?)", (cycle,))
+        return stale
+    if row[0] < cycle:
+        _archive(cursor, now)
+        cursor.execute("UPDATE bot_state SET value = ? WHERE key = 'cycle_start'", (cycle,))
+        return True
+    return False
+
+
+def ensure_current_cycle(now=None) -> bool:
+    """Catch up a missed reset once, atomically across processes and restarts."""
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        return _ensure_cycle(conn.cursor(), now)
 
 
 def init_database():
-    """Инициализация базы данных и создание таблиц если они не существуют"""
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    cursor = conn.cursor()
+    """Initialize and safely migrate persistent bot state."""
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        cursor = conn.cursor()
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+        except sqlite3.OperationalError as error:
+            # Bot and HTTP service can initialize the shared file together.
+            # Another connection may be changing journal mode right now;
+            # BEGIN IMMEDIATE below still serializes the mandatory migration.
+            if "locked" not in str(error).lower():
+                raise
+        cursor.execute("BEGIN IMMEDIATE")
 
-    # Таблица пользователей
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            username VARCHAR(100),
-            registration_date TIMESTAMP
-        )
-    """)
+        # Таблица пользователей
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                user_id BIGINT PRIMARY KEY,
+                username VARCHAR(100),
+                registration_date TIMESTAMP
+            )
+        """)
 
-    # Таблица текущих отчетов о торговце
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS trader_reports (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server VARCHAR(20),
-            location_name VARCHAR(50),
-            x_coord INTEGER,
-            y_coord INTEGER,
-            reporter_id BIGINT,
-            report_date TIMESTAMP,
-            is_first_reporter BOOLEAN DEFAULT FALSE,
-            FOREIGN KEY (reporter_id) REFERENCES users(user_id)
-        )
-    """)
+        # Таблица текущих отчетов о торговце
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trader_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server VARCHAR(20),
+                location_name VARCHAR(50),
+                x_coord INTEGER,
+                y_coord INTEGER,
+                reporter_id BIGINT,
+                report_date TIMESTAMP,
+                is_first_reporter BOOLEAN DEFAULT FALSE,
+                FOREIGN KEY (reporter_id) REFERENCES users(user_id)
+            )
+        """)
 
-    # Таблица истории отчетов
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS trader_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server VARCHAR(20),
-            location_name VARCHAR(50),
-            x_coord INTEGER,
-            y_coord INTEGER,
-            reporter_id BIGINT,
-            report_date TIMESTAMP,
-            is_first_reporter BOOLEAN DEFAULT FALSE,
-            archived_at TIMESTAMP,
-            FOREIGN KEY (reporter_id) REFERENCES users(user_id)
-        )
-    """)
+        # Таблица истории отчетов
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trader_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server VARCHAR(20),
+                location_name VARCHAR(50),
+                x_coord INTEGER,
+                y_coord INTEGER,
+                reporter_id BIGINT,
+                report_date TIMESTAMP,
+                is_first_reporter BOOLEAN DEFAULT FALSE,
+                archived_at TIMESTAMP,
+                FOREIGN KEY (reporter_id) REFERENCES users(user_id)
+            )
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS location_checks (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            server VARCHAR(20) NOT NULL,
-            location_name VARCHAR(50) NOT NULL,
-            checker_id BIGINT NOT NULL,
-            checked_at TIMESTAMP NOT NULL,
-            status VARCHAR(20) NOT NULL DEFAULT 'not_found',
-            UNIQUE(server, location_name, checker_id),
-            FOREIGN KEY (checker_id) REFERENCES users(user_id)
-        )
-    """)
-    _migrate_location_checks_schema(cursor)
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_location_checks_server_location
-        ON location_checks(server, location_name)
-    """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS location_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server VARCHAR(20) NOT NULL,
+                location_name VARCHAR(50) NOT NULL,
+                checker_id BIGINT NOT NULL,
+                checked_at TIMESTAMP NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'not_found',
+                UNIQUE(server, location_name, checker_id),
+                FOREIGN KEY (checker_id) REFERENCES users(user_id)
+            )
+        """)
+        _migrate_location_checks_schema(cursor)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_location_checks_server_location
+            ON location_checks(server, location_name)
+        """)
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS server_subscriptions (
-            user_id BIGINT NOT NULL,
-            server VARCHAR(20) NOT NULL,
-            PRIMARY KEY (user_id, server)
-        )
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS trader_notification_events (
-            server VARCHAR(20) NOT NULL,
-            location_name VARCHAR(50) NOT NULL,
-            PRIMARY KEY (server, location_name)
-        )
-    """)
-    # Existing reports are already known, so enabling this feature must not
-    # cause an old location to be broadcast on the next confirmation.
-    cursor.execute("""
-        INSERT OR IGNORE INTO trader_notification_events (server, location_name)
-        SELECT DISTINCT server, location_name FROM trader_reports
-    """)
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS trader_notifications (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id BIGINT NOT NULL,
-            server VARCHAR(20) NOT NULL,
-            location_name VARCHAR(50) NOT NULL,
-            x_coord INTEGER NOT NULL,
-            y_coord INTEGER NOT NULL,
-            status VARCHAR(20) NOT NULL DEFAULT 'pending',
-            attempts INTEGER NOT NULL DEFAULT 0
-        )
-    """)
-    cursor.execute("""
-        CREATE INDEX IF NOT EXISTS idx_trader_notifications_status
-        ON trader_notifications(status, id)
-    """)
-
-    conn.commit()
-    conn.close()
-
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS server_subscriptions (
+                user_id BIGINT NOT NULL,
+                server VARCHAR(20) NOT NULL,
+                PRIMARY KEY (user_id, server)
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trader_notification_events (
+                server VARCHAR(20) NOT NULL,
+                location_name VARCHAR(50) NOT NULL,
+                PRIMARY KEY (server, location_name)
+            )
+        """)
+        # Existing reports are already known, so enabling this feature must not
+        # cause an old location to be broadcast on the next confirmation.
+        cursor.execute("""
+            INSERT OR IGNORE INTO trader_notification_events (server, location_name)
+            SELECT DISTINCT server, location_name FROM trader_reports
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trader_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id BIGINT NOT NULL,
+                server VARCHAR(20) NOT NULL,
+                location_name VARCHAR(50) NOT NULL,
+                x_coord INTEGER NOT NULL,
+                y_coord INTEGER NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'pending',
+                attempts INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_trader_notifications_status
+            ON trader_notifications(status, id)
+        """)
+        columns = {row[1] for row in cursor.execute("PRAGMA table_info(trader_notifications)")}
+        for name, definition in (
+            ("cycle_start", "TEXT NOT NULL DEFAULT ''"),
+            ("expires_at", "REAL NOT NULL DEFAULT 0"),
+            ("next_attempt_at", "REAL NOT NULL DEFAULT 0"),
+            ("claimed_until", "REAL NOT NULL DEFAULT 0"),
+        ):
+            if name not in columns:
+                cursor.execute(f"ALTER TABLE trader_notifications ADD COLUMN {name} {definition}")
+        cursor.execute("CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS report_cooldowns (
+                reporter_id BIGINT NOT NULL, server TEXT NOT NULL,
+                last_changed_at REAL NOT NULL, PRIMARY KEY (reporter_id, server)
+            )
+        """)
+        _ensure_cycle(cursor)
+        cycle = _cycle_start()
+        cursor.execute("""
+            UPDATE trader_notifications SET cycle_start = ?, expires_at = ?
+            WHERE cycle_start = ''
+        """, (cycle.isoformat(), (cycle + timedelta(days=1)).timestamp()))
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_subscriptions_server ON server_subscriptions(server)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_server_location ON trader_reports(server, location_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_reports_server_reporter ON trader_reports(server, reporter_id)")
 
 def get_subscriptions(user_id: int) -> set[str]:
     with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
@@ -141,43 +239,95 @@ def set_subscriptions(user_id: int, servers):
         """, (user_id,))
 
 
+def _notification_valid(cursor, notification_id, now):
+    return cursor.execute("""
+        SELECT 1 FROM trader_notifications n
+        WHERE n.id = ? AND n.cycle_start = ? AND n.expires_at > ?
+        AND EXISTS (SELECT 1 FROM server_subscriptions s
+                    WHERE s.user_id = n.user_id AND s.server = n.server)
+        AND EXISTS (SELECT 1 FROM trader_reports r
+                    WHERE r.server = n.server AND r.location_name = n.location_name)
+    """, (notification_id, _cycle_start(now).isoformat(), now.timestamp())).fetchone() is not None
+
+
 def get_pending_notifications(limit: int = 20):
     with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        now = _utc_now()
+        _ensure_cycle(conn.cursor(), now)
         return conn.execute("""
-            SELECT id, user_id, server, location_name, x_coord, y_coord
-            FROM trader_notifications WHERE status = 'pending'
-            ORDER BY id LIMIT ?
-        """, (limit,)).fetchall()
+            SELECT n.id, n.user_id, n.server, n.location_name, n.x_coord, n.y_coord
+            FROM trader_notifications n
+            WHERE ((n.status = 'pending' AND n.next_attempt_at <= ?)
+                   OR (n.status = 'sending' AND n.claimed_until <= ?))
+            AND n.expires_at > ? AND n.cycle_start = ?
+            AND EXISTS (SELECT 1 FROM server_subscriptions s
+                        WHERE s.user_id = n.user_id AND s.server = n.server)
+            AND EXISTS (SELECT 1 FROM trader_reports r
+                        WHERE r.server = n.server AND r.location_name = n.location_name)
+            ORDER BY n.next_attempt_at, n.id LIMIT ?
+        """, (now.timestamp(), now.timestamp(), now.timestamp(),
+              _cycle_start(now).isoformat(), limit)).fetchall()
+
+
+def claim_notification(notification_id: int, lease_seconds: int = 120) -> bool:
+    """Claim one due row atomically; a crashed worker's lease can be retried."""
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor, now = conn.cursor(), _utc_now()
+        _ensure_cycle(cursor, now)
+        if not _notification_valid(cursor, notification_id, now):
+            return False
+        cursor.execute("""
+            UPDATE trader_notifications SET status = 'sending', claimed_until = ?
+            WHERE id = ? AND ((status = 'pending' AND next_attempt_at <= ?)
+                              OR (status = 'sending' AND claimed_until <= ?))
+        """, (now.timestamp() + lease_seconds, notification_id, now.timestamp(), now.timestamp()))
+        return cursor.rowcount == 1
+
+
+def notification_is_current(notification_id: int) -> bool:
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        cursor, now = conn.cursor(), _utc_now()
+        _ensure_cycle(cursor, now)
+        return _notification_valid(cursor, notification_id, now) and cursor.execute(
+            "SELECT 1 FROM trader_notifications WHERE id = ? AND status = 'sending' AND claimed_until > ?",
+            (notification_id, now.timestamp()),
+        ).fetchone() is not None
 
 
 def finish_notification(notification_id: int, status: str):
+    """Transient delivery errors back off until this location's cycle expires."""
+    if status not in {"pending", "sent", "failed", "cancelled"}:
+        raise ValueError("Invalid notification status")
     with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
-        conn.execute("""
-            UPDATE trader_notifications SET attempts = attempts + 1,
-                status = CASE WHEN ? = 'pending' AND attempts >= 2
-                              THEN 'failed' ELSE ? END
-            WHERE id = ?
-        """, (status, status, notification_id))
+        conn.execute("BEGIN IMMEDIATE")
+        cursor, now = conn.cursor(), _utc_now()
+        _ensure_cycle(cursor, now)
+        row = cursor.execute(
+            "SELECT attempts, expires_at FROM trader_notifications WHERE id = ?", (notification_id,)
+        ).fetchone()
+        if row is None:
+            return
+        delay = min(1800, 30 * (2 ** min(row[0], 6)))
+        next_attempt = min(now.timestamp() + delay, row[1])
+        if status == 'pending' and row[1] <= now.timestamp():
+            status = 'cancelled'
+        cursor.execute("""
+            UPDATE trader_notifications SET attempts = attempts + 1, status = ?,
+                next_attempt_at = ?, claimed_until = 0 WHERE id = ?
+        """, (status, next_attempt, notification_id))
 
 
 def register_user(user_id: int, username: str):
-    """Регистрация нового пользователя"""
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT user_id FROM users WHERE user_id = ?", (user_id,)
-    )
-    if cursor.fetchone() is None:
-        cursor.execute(
-            "INSERT INTO users (user_id, username, registration_date) VALUES (?, ?, ?)",
+    """Atomic registration, safe for simultaneous bot and HTTP requests."""
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        cursor = conn.execute(
+            "INSERT OR IGNORE INTO users (user_id, username, registration_date) VALUES (?, ?, ?)",
             (user_id, username, datetime.now()),
         )
-        conn.commit()
-        conn.close()
-        return True  # Новый пользователь
-    conn.close()
-    return False  # Уже зарегистрирован
+        return cursor.rowcount == 1
 
 
 def is_user_registered(user_id: int) -> bool:
@@ -193,75 +343,63 @@ def is_user_registered(user_id: int) -> bool:
 def add_trader_report(
     server: str, location_name: str, x_coord: int, y_coord: int, reporter_id: int
 ):
-    """Добавление или обновление отчета (1 голос = 1 пользователь на сервере)"""
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    cursor = conn.cursor()
-    cursor.execute("BEGIN IMMEDIATE")
+    """One vote per player/server, with atomic cooldown and notification enqueue."""
+    from coords_handler import SERVERS, get_all_locations
+    if server not in SERVERS or location_name not in get_all_locations():
+        raise ValueError("Unknown report server or location")
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        now = _utc_now()
+        _ensure_cycle(cursor, now)
+        existing = cursor.execute(
+            "SELECT location_name FROM trader_reports WHERE server = ? AND reporter_id = ?",
+            (server, reporter_id),
+        ).fetchone()
+        if existing and existing[0] == location_name:
+            cursor.execute(
+                "UPDATE trader_reports SET report_date = ?, x_coord = ?, y_coord = ? WHERE server = ? AND reporter_id = ?",
+                (now.replace(tzinfo=None), x_coord, y_coord, server, reporter_id),
+            )
+            cursor.execute("DELETE FROM location_checks WHERE server = ? AND location_name = ?", (server, location_name))
+            return False
 
-    # Проверяем, есть ли уже запись этого пользователя на этом сервере
-    cursor.execute(
-        "SELECT location_name FROM trader_reports WHERE server = ? AND reporter_id = ?",
-        (server, reporter_id),
-    )
-    existing_user = cursor.fetchone()
-
-    if existing_user and existing_user[0] == location_name:
-        # Пользователь уже сообщал эту локацию — просто обновляем время
+        previous = cursor.execute(
+            "SELECT last_changed_at FROM report_cooldowns WHERE reporter_id = ? AND server = ?",
+            (reporter_id, server),
+        ).fetchone()
+        if previous:
+            remaining = previous[0] + REPORT_COOLDOWN_SECONDS - now.timestamp()
+            if remaining > 0:
+                raise ReportCooldownError(math.ceil(remaining))
         cursor.execute(
-            "UPDATE trader_reports SET report_date = ?, x_coord = ?, y_coord = ? WHERE server = ? AND reporter_id = ?",
-            (datetime.now(), x_coord, y_coord, server, reporter_id),
+            "DELETE FROM trader_reports WHERE server = ? AND reporter_id = ?", (server, reporter_id)
         )
+        is_first = cursor.execute(
+            "SELECT 1 FROM trader_reports WHERE server = ? AND location_name = ? LIMIT 1", (server, location_name)
+        ).fetchone() is None
+        cursor.execute("""
+            INSERT INTO trader_reports (server, location_name, x_coord, y_coord, reporter_id,
+                                        report_date, is_first_reporter) VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (server, location_name, x_coord, y_coord, reporter_id, now.replace(tzinfo=None), is_first))
+        cursor.execute("""
+            INSERT INTO report_cooldowns (reporter_id, server, last_changed_at) VALUES (?, ?, ?)
+            ON CONFLICT(reporter_id, server) DO UPDATE SET last_changed_at = excluded.last_changed_at
+        """, (reporter_id, server, now.timestamp()))
+        cursor.execute("DELETE FROM location_checks WHERE server = ? AND location_name = ?", (server, location_name))
         cursor.execute(
-            "DELETE FROM location_checks WHERE server = ? AND location_name = ?",
+            "INSERT OR IGNORE INTO trader_notification_events (server, location_name) VALUES (?, ?)",
             (server, location_name),
         )
-        conn.commit()
-        conn.close()
-        return False  # Не первый
-
-    if existing_user:
-        # Пользователь сообщал другую локацию — удаляем старый голос
-        cursor.execute(
-            "DELETE FROM trader_reports WHERE server = ? AND reporter_id = ?",
-            (server, reporter_id),
-        )
-
-    # Проверяем, есть ли уже эта локация в БД
-    cursor.execute(
-        "SELECT COUNT(*) FROM trader_reports WHERE server = ? AND location_name = ?",
-        (server, location_name),
-    )
-    count = cursor.fetchone()[0]
-    is_first = count == 0
-
-    # Вставляем новую запись
-    cursor.execute(
-        "INSERT INTO trader_reports (server, location_name, x_coord, y_coord, reporter_id, report_date, is_first_reporter) VALUES (?, ?, ?, ?, ?, ?, ?)",
-        (server, location_name, x_coord, y_coord, reporter_id, datetime.now(), is_first),
-    )
-
-    # A confirmed trader report supersedes all "not found" checks for this point.
-    cursor.execute(
-        "DELETE FROM location_checks WHERE server = ? AND location_name = ?",
-        (server, location_name),
-    )
-
-    # One event per point per daily cycle, including when all votes move away
-    # and return. Queue recipients in the same transaction as the report.
-    cursor.execute(
-        "INSERT OR IGNORE INTO trader_notification_events (server, location_name) VALUES (?, ?)",
-        (server, location_name),
-    )
-    if cursor.rowcount:
-        cursor.execute("""
-            INSERT INTO trader_notifications
-                (user_id, server, location_name, x_coord, y_coord)
-            SELECT user_id, server, ?, ?, ? FROM server_subscriptions WHERE server = ?
-        """, (location_name, x_coord, y_coord, server))
-
-    conn.commit()
-    conn.close()
-    return is_first
+        if cursor.rowcount:
+            cycle = _cycle_start(now)
+            cursor.execute("""
+                INSERT INTO trader_notifications
+                    (user_id, server, location_name, x_coord, y_coord, cycle_start, expires_at)
+                SELECT user_id, server, ?, ?, ?, ?, ? FROM server_subscriptions WHERE server = ?
+            """, (location_name, x_coord, y_coord, cycle.isoformat(),
+                  (cycle + timedelta(days=1)).timestamp(), server))
+        return is_first
 
 
 def _migrate_location_checks_schema(cursor):
@@ -300,6 +438,7 @@ def _migrate_location_checks_schema(cursor):
 
 def get_trader_reports():
     """Получение всех текущих отчетов о торговце"""
+    ensure_current_cycle()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute("""
@@ -315,6 +454,7 @@ def get_trader_reports():
 
 def get_trader_report_summary():
     """Return public aggregate reports without Discord user data."""
+    ensure_current_cycle()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute("""
@@ -330,6 +470,7 @@ def get_trader_report_summary():
 
 def has_trader_report_for_server(server: str, location_name: str) -> bool:
     """Проверка, есть ли уже отчет для сервера и локации"""
+    ensure_current_cycle()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute(
@@ -342,28 +483,27 @@ def has_trader_report_for_server(server: str, location_name: str) -> bool:
 
 
 def add_location_check(server: str, location_name: str, checker_id: int):
-    """Save or refresh a player's 'trader not found' check for one exact point."""
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT 1 FROM trader_reports WHERE server = ? AND location_name = ? LIMIT 1",
-        (server, location_name),
-    )
-    if cursor.fetchone():
-        conn.close()
-        return False
-    cursor.execute(
-        """
-        INSERT INTO location_checks (server, location_name, checker_id, checked_at, status)
-        VALUES (?, ?, ?, ?, 'not_found')
-        ON CONFLICT(server, location_name, checker_id)
-        DO UPDATE SET checked_at = excluded.checked_at, status = excluded.status
-        """,
-        (server, location_name, checker_id, datetime.now()),
-    )
-    conn.commit()
-    conn.close()
-    return True
+    """Save a not-found check under the same write lock as trader reports."""
+    from coords_handler import SERVERS, get_all_locations
+    if server not in SERVERS or location_name not in get_all_locations():
+        raise ValueError("Unknown check server or location")
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        now = _utc_now()
+        _ensure_cycle(cursor, now)
+        if cursor.execute(
+            "SELECT 1 FROM trader_reports WHERE server = ? AND location_name = ? LIMIT 1",
+            (server, location_name),
+        ).fetchone():
+            return False
+        cursor.execute("""
+            INSERT INTO location_checks (server, location_name, checker_id, checked_at, status)
+            VALUES (?, ?, ?, ?, 'not_found')
+            ON CONFLICT(server, location_name, checker_id)
+            DO UPDATE SET checked_at = excluded.checked_at, status = excluded.status
+        """, (server, location_name, checker_id, now.replace(tzinfo=None)))
+        return True
 
 
 def remove_location_check(server: str, location_name: str, checker_id: int) -> bool:
@@ -385,6 +525,7 @@ def remove_location_check(server: str, location_name: str, checker_id: int) -> b
 
 def get_user_checked_locations(server: str, checker_id: int) -> set[str]:
     """Return exact locations currently marked by one player on one server."""
+    ensure_current_cycle()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute(
@@ -401,6 +542,7 @@ def get_user_checked_locations(server: str, checker_id: int) -> set[str]:
 
 def get_location_check_summary(server: str):
     """Return (location_name, latest_check_time, number_of_checkers) by location."""
+    ensure_current_cycle()
     conn = sqlite3.connect(DB_PATH, timeout=10)
     cursor = conn.cursor()
     cursor.execute(
@@ -418,25 +560,16 @@ def get_location_check_summary(server: str):
 
 
 def archive_reports():
-    """Архивирование текущих отчетов в историю"""
-    conn = sqlite3.connect(DB_PATH, timeout=10)
-    cursor = conn.cursor()
-
-    now = datetime.now()
-
-    cursor.execute("""
-        INSERT INTO trader_history (server, location_name, x_coord, y_coord, reporter_id, report_date, is_first_reporter, archived_at)
-        SELECT server, location_name, x_coord, y_coord, reporter_id, report_date, is_first_reporter, ?
-        FROM trader_reports
-    """, (now,))
-
-    cursor.execute("DELETE FROM trader_reports")
-    cursor.execute("DELETE FROM location_checks")
-    cursor.execute("DELETE FROM trader_notification_events")
-    cursor.execute("DELETE FROM trader_notifications")
-
-    conn.commit()
-    conn.close()
+    """Explicit administrative reset; scheduled resets use ensure_current_cycle."""
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        cursor = conn.cursor()
+        cursor.execute("BEGIN IMMEDIATE")
+        now = _utc_now()
+        _archive(cursor, now)
+        cursor.execute("""
+            INSERT INTO bot_state (key, value) VALUES ('cycle_start', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+        """, (_cycle_start(now).isoformat(),))
 
 
 def get_history_by_date(date_str: str):
