@@ -85,7 +85,10 @@ class SubscriptionView(discord.ui.LayoutView):
         unsubscribe = discord.ui.Button(
             label="Отписаться от всех", style=discord.ButtonStyle.danger,
         )
-        cancel = discord.ui.Button(label="Отмена", style=discord.ButtonStyle.secondary)
+        cancel = discord.ui.Button(
+            label="Отмена", style=discord.ButtonStyle.secondary,
+            disabled=self.selected == self.current,
+        )
         save.callback = self.save
         unsubscribe.callback = self.unsubscribe
         cancel.callback = self.cancel
