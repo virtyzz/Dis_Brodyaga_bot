@@ -32,6 +32,17 @@ class NotificationActionTests(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Это отметка игрока", text)
         self.assertNotIn("главного меню", text)
 
+    async def test_reporter_is_plain_escaped_text_below_coordinates(self):
+        view = sub.TraderNotificationView(
+            SERVERS[0], get_all_locations()[0], 123, 456,
+            reporter_name="**player**\n<@123456789012345678> @everyone",
+        )
+        text = view.children[0].children[0].content
+        self.assertIn("**Координаты:** X: 123, Y: 456\n**Сообщил:**", text)
+        self.assertIn(r"\*\*player\*\*", text)
+        self.assertNotIn("<@123456789012345678>", text)
+        self.assertNotIn("@everyone", text)
+
     async def test_management_opens_clicking_users_menu_in_new_dm_response(self):
         event = interaction(91)
         menu = sub.SubscriptionView(91)

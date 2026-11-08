@@ -263,13 +263,17 @@ def register_notification_views(bot):
 
 
 class TraderNotificationView(discord.ui.LayoutView):
-    def __init__(self, server: str, location: str, x: int, y: int):
+    def __init__(self, server: str, location: str, x: int, y: int,
+                 reporter_name: str = "неизвестно"):
         super().__init__(timeout=None)
+        reporter = " ".join(str(reporter_name or "неизвестно").split())[:100] or "неизвестно"
+        reporter = discord.utils.escape_markdown(discord.utils.escape_mentions(reporter))
         container = discord.ui.Container(discord.ui.TextDisplay(
             "# Сообщили о бродяге\n"
             f"**Сервер:** {get_server_display_name(server)}\n"
             f"**Локация:** {location}\n"
-            f"**Координаты:** X: {x}, Y: {y}"
+            f"**Координаты:** X: {x}, Y: {y}\n"
+            f"**Сообщил:** {reporter}"
         ))
         actions = [NotificationPhotoButton(location)]
         map_url = get_brodyaga_map_url(location)
@@ -289,7 +293,7 @@ async def send_pending_notifications(bot):
     except sqlite3.Error:
         logger.exception("Cannot read notification queue; will retry next pass")
         return
-    for notification_id, user_id, server, location, x, y in pending:
+    for notification_id, user_id, server, location, x, y, reporter_name in pending:
         try:
             if not await asyncio.to_thread(claim_notification, notification_id):
                 continue
@@ -304,7 +308,7 @@ async def send_pending_notifications(bot):
                     await asyncio.to_thread(finish_notification, notification_id, "cancelled")
                     continue
                 await asyncio.wait_for(user.send(
-                    view=TraderNotificationView(server, location, x, y),
+                    view=TraderNotificationView(server, location, x, y, reporter_name),
                     allowed_mentions=discord.AllowedMentions.none(),
                     # Stable across retries. discord.py sets enforce_nonce,
                     # so Discord deduplicates recent ambiguous send attempts.

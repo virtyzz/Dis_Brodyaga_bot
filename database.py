@@ -191,6 +191,8 @@ def init_database():
             ("expires_at", "REAL NOT NULL DEFAULT 0"),
             ("next_attempt_at", "REAL NOT NULL DEFAULT 0"),
             ("claimed_until", "REAL NOT NULL DEFAULT 0"),
+            ("reporter_id", "BIGINT"),
+            ("reporter_name", "TEXT NOT NULL DEFAULT ''"),
         ):
             if name not in columns:
                 cursor.execute(f"ALTER TABLE trader_notifications ADD COLUMN {name} {definition}")
@@ -256,7 +258,8 @@ def get_pending_notifications(limit: int = 20):
         now = _utc_now()
         _ensure_cycle(conn.cursor(), now)
         return conn.execute("""
-            SELECT n.id, n.user_id, n.server, n.location_name, n.x_coord, n.y_coord
+            SELECT n.id, n.user_id, n.server, n.location_name, n.x_coord, n.y_coord,
+                   COALESCE(NULLIF(n.reporter_name, ''), 'неизвестно')
             FROM trader_notifications n
             WHERE ((n.status = 'pending' AND n.next_attempt_at <= ?)
                    OR (n.status = 'sending' AND n.claimed_until <= ?))
@@ -393,12 +396,19 @@ def add_trader_report(
         )
         if cursor.rowcount:
             cycle = _cycle_start(now)
+            # Capture the event's author now. Later votes or profile changes
+            # must not replace the first reporter in a delayed/retried alert.
+            reporter = cursor.execute(
+                "SELECT username FROM users WHERE user_id = ?", (reporter_id,)
+            ).fetchone()
+            reporter_name = reporter[0] if reporter and reporter[0] else "неизвестно"
             cursor.execute("""
                 INSERT INTO trader_notifications
-                    (user_id, server, location_name, x_coord, y_coord, cycle_start, expires_at)
-                SELECT user_id, server, ?, ?, ?, ?, ? FROM server_subscriptions WHERE server = ?
+                    (user_id, server, location_name, x_coord, y_coord, cycle_start, expires_at,
+                     reporter_id, reporter_name)
+                SELECT user_id, server, ?, ?, ?, ?, ?, ?, ? FROM server_subscriptions WHERE server = ?
             """, (location_name, x_coord, y_coord, cycle.isoformat(),
-                  (cycle + timedelta(days=1)).timestamp(), server))
+                  (cycle + timedelta(days=1)).timestamp(), reporter_id, reporter_name, server))
         return is_first
 
 

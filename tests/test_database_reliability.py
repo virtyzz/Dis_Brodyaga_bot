@@ -33,6 +33,20 @@ class DatabaseReliabilityTests(unittest.TestCase):
     def report(self, location=None, reporter=9):
         return db.add_trader_report(self.server, location or self.location, 1, 2, reporter)
 
+    def test_alert_keeps_first_author_after_confirmations_vote_change_and_restart(self):
+        db.register_user(9, "first_player")
+        db.register_user(10, "confirming_player")
+        self.report(reporter=9)
+        self.report(reporter=10)
+        self.assertEqual(len(db.get_pending_notifications()), 1)
+        self.now += timedelta(seconds=db.REPORT_COOLDOWN_SECONDS)
+        self.report(self.other, reporter=9)
+        with closing(sqlite3.connect(db.DB_PATH)) as conn, conn:
+            conn.execute("UPDATE users SET username = 'new_name' WHERE user_id = 9")
+        db.init_database()
+        first_alert = next(row for row in db.get_pending_notifications() if row[3] == self.location)
+        self.assertEqual(first_alert[6], "first_player")
+
     def test_missed_reset_catches_up_once_and_preserves_subscriptions(self):
         self.report()
         self.now += timedelta(days=1, minutes=5)
@@ -152,6 +166,10 @@ class DatabaseReliabilityTests(unittest.TestCase):
         db.init_database()
         self.assertEqual(len(db.get_trader_report_summary()), 1)
         self.assertEqual(len(db.get_pending_notifications()), 1)
+
+        # Legacy queued events do not contain a provable original author.
+        # Preserve the row without attributing it to a later confirmation.
+        self.assertEqual(db.get_pending_notifications()[0][6], "неизвестно")
 
     def test_legacy_old_reports_are_archived_on_upgrade(self):
         self.report()
