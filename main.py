@@ -65,7 +65,19 @@ intents.message_content = True
 intents.members = True
 
 logger = logging.getLogger(__name__)
-bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+class BrodyagaBot(commands.Bot):
+    async def setup_hook(self):
+        # Register persistent buttons before connecting to the Gateway, so
+        # messages posted by earlier processes already have handlers at login.
+        await asyncio.to_thread(init_database)
+        await asyncio.to_thread(ensure_current_cycle)
+        self.add_view(MainMenuV2View())
+        logger.info("Database and persistent menu initialized")
+
+
+bot = BrodyagaBot(command_prefix="!", intents=intents)
 
 # Хранилище состояний для многошагового процесса сообщения
 # user_id -> {"step": int, "server": str, "location_base": str, "timestamp": float}
@@ -213,11 +225,6 @@ async def on_ready():
     """Событие при запуске бота"""
     print(f"Бот запущен: {bot.user.name} (ID: {bot.user.id})")
 
-    # Инициализация базы данных
-    await asyncio.to_thread(init_database)
-    await asyncio.to_thread(ensure_current_cycle)
-    print("База данных инициализирована")
-
     # Запуск задачи архивирования (04:00 MSK = 01:00 UTC)
     if not archive_daily.is_running():
         archive_daily.start()
@@ -225,9 +232,45 @@ async def on_ready():
         subscription_notifications.start()
     print("Задача ежедневного архивирования запущена")
 
-    # Регистрация persistent views (работают после перезапуска)
-    bot.add_view(MainMenuV2View())
-    print("Persistent views зарегистрированы")
+
+
+def has_component_handler(client, interaction) -> bool:
+    """Mirror discord.py's component lookup without running a second handler.
+
+    discord.py has no public lookup for expired/orphaned views. Keep this
+    compatibility access isolated; tests cover actual ViewStore dispatch.
+    """
+    store = client._connection._view_store
+    data = interaction.data or {}
+    key = (data.get("component_type"), data.get("custom_id"))
+    message = interaction.message
+    message_id = message.id if message is not None else None
+    # Older supported discord.py releases also keyed ephemeral views by the
+    # original interaction id until their message id became known.
+    metadata = getattr(message, "interaction_metadata", None)
+    legacy = getattr(message, "interaction", None)
+    identifiers = (message_id, getattr(metadata, "id", None),
+                   getattr(legacy, "id", None), None)
+    if any(key in store._views.get(identifier, {}) for identifier in identifiers):
+        return True
+    return any(pattern.fullmatch(key[1] or "") for pattern in store._dynamic_items)
+
+
+@bot.event
+async def on_interaction(interaction: discord.Interaction):
+    if interaction.type != discord.InteractionType.component or interaction.response.is_done():
+        return
+    if has_component_handler(bot, interaction):
+        return
+    # Never replay a stale save/confirmation: its unsaved state is gone.
+    # Give the clicker a fresh private menu instead of leaving the click unanswered.
+    await acknowledge(interaction, ephemeral=True, thinking=True)
+    menu = MainMenuV2View()
+    menu.children[0].add_item(discord.ui.TextDisplay(
+        "Предыдущее окно устарело после перезапуска или истечения времени. "
+        "Выберите действие заново. Сохранённые подписки продолжают действовать."
+    ))
+    await interaction.edit_original_response(view=menu)
 
 
 @tasks.loop(seconds=10)
