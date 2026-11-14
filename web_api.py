@@ -12,12 +12,14 @@ import os
 import secrets
 import sqlite3
 import time
+import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from activity_logging import configure_activity_file, context as activity_context, emit
 
 from coords_handler import SERVERS, get_all_locations, get_location_coords
 from database import (
@@ -88,7 +90,13 @@ def get_redirect_uri(return_to: str) -> str | None:
 class ApiHandler(BaseHTTPRequestHandler):
     server_version = "BrodyagaApi/1.0"
 
+    def begin_activity(self):
+        # HTTP worker threads may be reused: always start with a fresh context.
+        activity_context.set({"source": "map", "request_id": uuid.uuid4().hex,
+                              "user_id": None, "username": None})
+
     def do_GET(self) -> None:
+        self.begin_activity()
         path = urllib.parse.urlparse(self.path).path
         if path == "/health":
             self.send_json(HTTPStatus.OK, {"ok": True})
@@ -105,12 +113,14 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
     def do_POST(self) -> None:
+        self.begin_activity()
         if urllib.parse.urlparse(self.path).path == "/reports":
             self.create_report()
         else:
             self.send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
     def do_OPTIONS(self) -> None:
+        self.begin_activity()
         self.send_response(HTTPStatus.NO_CONTENT)
         self.send_cors_headers()
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
@@ -148,8 +158,7 @@ class ApiHandler(BaseHTTPRequestHandler):
             token = json_request("https://discord.com/api/v10/oauth2/token", data={"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "grant_type": "authorization_code", "code": code, "redirect_uri": saved["redirect_uri"]}, headers={"Content-Type": "application/x-www-form-urlencoded"})
             user = json_request("https://discord.com/api/v10/users/@me", headers={"Authorization": f"Bearer {token['access_token']}"})
         except urllib.error.HTTPError as error:
-            details = error.read().decode("utf-8", errors="replace")
-            LOGGER.error("Discord OAuth HTTP %s: %s", error.code, details)
+            LOGGER.error("Discord OAuth HTTP %s", error.code)
             self.send_json(HTTPStatus.BAD_GATEWAY, {"ok": False, "error": "Discord authorization failed"})
             return
         except Exception:
@@ -158,6 +167,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             return
         session_id = secrets.token_urlsafe(32)
         SESSIONS[session_id] = {"user_id": str(user["id"]), "username": user.get("global_name") or user["username"], "csrf": secrets.token_urlsafe(24), "expires": time.time() + SESSION_TTL}
+        activity_context.set({**(activity_context.get() or {"source": "map"}),
+                              "user_id": str(user["id"]), "username": SESSIONS[session_id]["username"]})
         self.send_response(HTTPStatus.FOUND)
         cookie_value = f"{session_id}.{sign_session(session_id)}"
         domain_part = f"; Domain={COOKIE_DOMAIN}" if COOKIE_DOMAIN else ""
@@ -166,6 +177,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def send_reports(self) -> None:
+        self.get_session()  # Attach the actor when an authenticated map user reads reports.
         try:
             reports = [{"server": server, "location_name": location, "x": x, "y": y, "confirmations": count} for server, location, x, y, count in get_trader_report_summary()]
         except sqlite3.Error:
@@ -224,6 +236,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         session = SESSIONS.get(session_id)
         if not session or session["expires"] < time.time():
             return None
+        activity_context.set({**(activity_context.get() or {"source": "map"}),
+                              "user_id": str(session["user_id"]), "username": session["username"]})
         return session
 
     def read_json(self) -> dict:
@@ -258,8 +272,19 @@ class ApiHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *args) -> None:
         return
 
+    def log_request(self, code="-", size="-") -> None:
+        path = urllib.parse.urlparse(self.path).path
+        if path == "/health" or self.command == "OPTIONS":
+            return
+        # Never log raw URLs: OAuth query strings contain codes and state.
+        route = path if path in {"/reports", "/auth/session", "/auth/discord", "/auth/callback"} else "unknown"
+        status = int(code)
+        emit("http_result", action=f"{self.command} {route}", status=status,
+             outcome="success" if status < 400 else "error")
+
 
 def main() -> None:
+    configure_activity_file("api")
     init_database()
     ThreadingHTTPServer(("0.0.0.0", 8099), ApiHandler).serve_forever()
 

@@ -7,6 +7,7 @@ from weakref import WeakValueDictionary
 
 import discord
 from interaction_utils import acknowledge
+from activity_logging import emit
 
 from coords_handler import (
     SERVERS, get_server_display_name, get_brodyaga_map_url,
@@ -322,6 +323,11 @@ async def send_pending_notifications(bot):
             else:
                 status = "sent"
             await asyncio.to_thread(finish_notification, notification_id, status)
+            emit("notification_result", details={"source": "notification", "request_id": None,
+                 "user_id": str(user_id), "username": None, "guild_id": None,
+                 "guild_name": None, "channel_id": None, "channel_name": None},
+                 notification_id=str(notification_id), game_server=server,
+                 location_name=location, outcome=status)
         except sqlite3.Error:
             # A failed acknowledgement is recovered through the row's lease.
             # Never stop the background loop because SQLite was briefly busy.

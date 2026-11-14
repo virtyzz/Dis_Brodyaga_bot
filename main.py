@@ -10,6 +10,7 @@ import time
 import pytz
 from subscriptions import SubscriptionView, send_pending_notifications, register_notification_views
 from interaction_utils import acknowledge
+from activity_logging import bind_discord, component_metadata, configure_activity_file, context as activity_context, discord_context, emit
 from datetime import datetime, time as dt_time
 
 from database import (
@@ -69,6 +70,16 @@ logger = logging.getLogger(__name__)
 
 
 class BrodyagaBot(commands.Bot):
+    async def invoke(self, ctx):
+        if ctx.prefix is None:
+            return await super().invoke(ctx)
+        token = bind_discord(ctx.message)
+        try:
+            emit("command_received", action=ctx.command.qualified_name if ctx.command else "unknown_command")
+            return await super().invoke(ctx)
+        finally:
+            activity_context.reset(token)
+
     async def setup_hook(self):
         # Register persistent buttons before connecting to the Gateway, so
         # messages posted by earlier processes already have handlers at login.
@@ -134,6 +145,9 @@ def database_action(callback):
     """Show recoverable database errors without losing an interactive menu."""
     @functools.wraps(callback)
     async def guarded(*args, **kwargs):
+        interaction = next((arg for arg in args if hasattr(arg, "response") and hasattr(arg, "user")), None)
+        if interaction is not None:
+            bind_discord(interaction)
         try:
             return await callback(*args, **kwargs)
         except (ReportCooldownError, sqlite3.Error) as error:
@@ -182,6 +196,9 @@ async def on_message(message):
 
     report = decode_map_report_code(message.content)
     if report:
+        bind_discord(message)
+        emit("map_code_received", action="trader_report", game_server=report[0], location_name=report[1],
+             outcome="received" if message.guild is None else "rejected_guild")
         if message.guild is not None:
             await message.reply("Отправьте код боту в личном сообщении.")
             return
@@ -247,6 +264,7 @@ async def on_ready():
     """Событие при запуске бота"""
     print(f"Бот запущен: {bot.user.name} (ID: {bot.user.id})")
     log_guild_inventory(bot)
+    emit("bot_ready", details={"source": "internal"}, guild_count=len(bot.guilds))
 
     # Запуск задачи архивирования (04:00 MSK = 01:00 UTC)
     if not archive_daily.is_running():
@@ -254,6 +272,17 @@ async def on_ready():
     if not subscription_notifications.is_running():
         subscription_notifications.start()
     print("Задача ежедневного архивирования запущена")
+
+
+@bot.event
+async def on_guild_join(guild):
+    emit("guild_join", details={"source": "guild"}, guild_id=str(guild.id),
+         guild_name=guild.name, member_count=guild.member_count)
+
+
+@bot.event
+async def on_guild_remove(guild):
+    emit("guild_remove", details={"source": "guild"}, guild_id=str(guild.id), guild_name=guild.name)
 
 
 
@@ -279,6 +308,10 @@ def has_component_handler(client, interaction) -> bool:
 
 @bot.event
 async def on_interaction(interaction: discord.Interaction):
+    if interaction.type == discord.InteractionType.component:
+        emit("interaction_received", details=discord_context(interaction), **component_metadata(interaction))
+    elif interaction.type == discord.InteractionType.application_command:
+        emit("command_received", details=discord_context(interaction), action=(interaction.data or {}).get("name"))
     if interaction.type != discord.InteractionType.component or interaction.response.is_done():
         return
     if has_component_handler(bot, interaction):
@@ -288,6 +321,7 @@ async def on_interaction(interaction: discord.Interaction):
     if not await acknowledge(interaction, ephemeral=True, thinking=True):
         return
     menu = MainMenuV2View()
+    emit("menu_recovered", details=discord_context(interaction), action="stale_component")
     menu.children[0].add_item(discord.ui.TextDisplay(
         "Предыдущее окно устарело после перезапуска или истечения времени. "
         "Выберите действие заново. Сохранённые подписки продолжают действовать."
@@ -1803,8 +1837,16 @@ async def start_location_status(interaction: discord.Interaction, show_progress:
 
 # Обработка ошибок
 @bot.event
+async def on_command_completion(ctx):
+    emit("command_result", details=discord_context(ctx.message), action=ctx.command.qualified_name, outcome="success")
+
+
+@bot.event
 async def on_command_error(ctx, error):
     """Обработка ошибок команд"""
+    emit("command_result", details=discord_context(ctx.message),
+         action=ctx.command.qualified_name if ctx.command else "unknown_command",
+         outcome="error", error_type=type(error).__name__)
     if isinstance(error, commands.CommandNotFound):
         await send_main_menu_from_command(ctx)
     else:
@@ -1834,4 +1876,5 @@ async def menu_command(interaction: discord.Interaction):
 
 
 if __name__ == "__main__":
+    configure_activity_file("bot")
     bot.run(TOKEN)

@@ -1,6 +1,7 @@
 import sqlite3
 import os
 import math
+from activity_logging import audit_write
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 
@@ -220,6 +221,7 @@ def get_subscriptions(user_id: int) -> set[str]:
         )}
 
 
+@audit_write("subscriptions_set", "user_id")
 def set_subscriptions(user_id: int, servers):
     """Replace a user's selection atomically; remove obsolete pending DMs."""
     from coords_handler import SERVERS
@@ -323,6 +325,7 @@ def finish_notification(notification_id: int, status: str):
         """, (status, next_attempt, notification_id))
 
 
+@audit_write("user_register", "user_id", "created")
 def register_user(user_id: int, username: str):
     """Atomic registration, safe for simultaneous bot and HTTP requests."""
     with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
@@ -343,6 +346,7 @@ def is_user_registered(user_id: int) -> bool:
     return result
 
 
+@audit_write("trader_report", "reporter_id", "is_first_reporter")
 def add_trader_report(
     server: str, location_name: str, x_coord: int, y_coord: int, reporter_id: int
 ):
@@ -492,6 +496,7 @@ def has_trader_report_for_server(server: str, location_name: str) -> bool:
     return count > 0
 
 
+@audit_write("location_check", "checker_id", "applied")
 def add_location_check(server: str, location_name: str, checker_id: int):
     """Save a not-found check under the same write lock as trader reports."""
     from coords_handler import SERVERS, get_all_locations
@@ -516,6 +521,7 @@ def add_location_check(server: str, location_name: str, checker_id: int):
         return True
 
 
+@audit_write("location_check_remove", "checker_id", "removed")
 def remove_location_check(server: str, location_name: str, checker_id: int) -> bool:
     """Withdraw the player's check for a point."""
     conn = sqlite3.connect(DB_PATH, timeout=10)

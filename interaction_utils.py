@@ -5,11 +5,13 @@ import time
 from datetime import datetime
 
 import discord
+from activity_logging import bind_discord, emit, discord_context
 
 logger = logging.getLogger(__name__)
 
 
 async def acknowledge(interaction, *, ephemeral=False, thinking=False) -> bool:
+    bind_discord(interaction)
     if interaction.response.is_done():
         return True
     started = time.monotonic()
@@ -18,6 +20,7 @@ async def acknowledge(interaction, *, ephemeral=False, thinking=False) -> bool:
     except discord.HTTPException as error:
         if error.code not in (10062, 40060):
             raise
+        emit("interaction_rejected", details=discord_context(interaction), error_code=error.code)
         created_at = getattr(interaction, "created_at", None)
         age = ((discord.utils.utcnow() - created_at).total_seconds()
                if isinstance(created_at, datetime) else None)
@@ -35,5 +38,6 @@ async def acknowledge(interaction, *, ephemeral=False, thinking=False) -> bool:
         # Another handler won a simultaneous initial response. Do not replay
         # an action whose result may already be in progress elsewhere.
         logger.warning("Concurrent interaction response; duplicate action cancelled")
+        emit("interaction_rejected", details=discord_context(interaction), error_type="InteractionResponded")
         return False
     return True

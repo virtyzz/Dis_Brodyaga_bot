@@ -9,6 +9,7 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
   brodyaga-api:
     build: .
     container_name: brodyaga_api
@@ -20,5 +21,6 @@ services:
       - .env
     volumes:
       - ./data:/app/data
+      - ./logs:/app/logs
     ports:
       - "${BRODYAGA_API_BIND_ADDRESS:-127.0.0.1}:8099:8099"
