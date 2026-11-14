@@ -122,6 +122,48 @@ class MapOutboxTests(unittest.TestCase):
         expected = hmac.new(b"secret", stamp.encode() + b"." + request.data, hashlib.sha256).hexdigest()
         self.assertEqual(request.get_header("X-brodyaga-signature"), expected)
 
+    def test_multiple_targets_have_independent_publishers(self):
+        targets = [{"url": "https://prod/internal", "secret": "p" * 32},
+                   {"url": "https://dev/internal", "secret": "d" * 32}]
+        with patch.dict(map_realtime.os.environ, {"BRODYAGA_PUSH_TARGETS": json.dumps(targets)}):
+            with patch.object(map_realtime.MapPublisher, "start") as start:
+                publishers = map_realtime.start_map_publisher()
+        self.assertEqual(start.call_count, 2)
+        self.assertEqual([(p.url, p.secret) for p in publishers.publishers],
+                         [(t["url"], t["secret"]) for t in targets])
+        self.assertIsNot(publishers.publishers[0].stop_event, publishers.publishers[1].stop_event)
+        with patch.object(map_realtime.MapPublisher, "stop") as stop:
+            publishers.stop()
+        self.assertEqual(stop.call_count, 2)
+
+    def test_invalid_target_configuration_starts_nothing_and_does_not_expose_keys(self):
+        values = [[], {"url": "https://prod", "secret": "private"},
+                  [{"url": "https://prod", "secret": "private"}],
+                  [{"url": "https://same", "secret": "x" * 32}] * 2]
+        for value in values:
+            with patch.dict(map_realtime.os.environ, {"BRODYAGA_PUSH_TARGETS": json.dumps(value)}):
+                with patch.object(map_realtime.MapPublisher, "start") as start:
+                    with self.assertRaises(ValueError) as error:
+                        map_realtime.start_map_publisher()
+                start.assert_not_called()
+                self.assertNotIn("private", str(error.exception))
+
+    def test_dev_outage_does_not_block_production_delivery(self):
+        production_delivered = threading.Event()
+
+        def send(url, secret, snapshot):
+            if url == "https://dev":
+                raise OSError("dev offline")
+            production_delivered.set()
+
+        publishers = map_realtime.MapPublishers([("https://dev", "d" * 32), ("https://prod", "p" * 32)])
+        with patch.object(map_realtime, "deliver_snapshot", side_effect=send):
+            publishers.start()
+            try:
+                self.assertTrue(production_delivered.wait(2))
+            finally:
+                publishers.stop()
+
 
 if __name__ == "__main__":
     unittest.main()

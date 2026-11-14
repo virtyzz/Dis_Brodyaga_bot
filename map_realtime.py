@@ -76,7 +76,43 @@ class MapPublisher:
                 self.stop_event.wait(0.2)
 
 
+class MapPublishers:
+    """Independent retries: an unavailable dev map cannot block production."""
+    def __init__(self, targets):
+        self.publishers = [MapPublisher(url, secret) for url, secret in targets]
+
+    def start(self):
+        for publisher in self.publishers:
+            publisher.start()
+
+    def stop(self):
+        for publisher in self.publishers:
+            publisher.stop()
+
+
 def start_map_publisher():
+    raw_targets = os.getenv("BRODYAGA_PUSH_TARGETS", "").strip()
+    if raw_targets:
+        try:
+            values = json.loads(raw_targets)
+            if not isinstance(values, list) or not 1 <= len(values) <= 10:
+                raise ValueError
+            targets = []
+            for item in values:
+                if not isinstance(item, dict) or set(item) != {"url", "secret"}:
+                    raise ValueError
+                url, secret = item["url"], item["secret"]
+                if not isinstance(url, str) or not url.strip() or not isinstance(secret, str) or len(secret) < 32:
+                    raise ValueError
+                targets.append((url.strip(), secret))
+            if len({url for url, _ in targets}) != len(targets):
+                raise ValueError
+        except (ValueError, TypeError):
+            # Never echo a malformed value: it contains private signing keys.
+            raise ValueError("BRODYAGA_PUSH_TARGETS must contain unique url/secret objects (32+ character secrets)") from None
+        publishers = MapPublishers(targets)
+        publishers.start()
+        return publishers
     url = os.getenv("BRODYAGA_PUSH_URL", "").strip()
     secret = os.getenv("BRODYAGA_PUSH_SECRET", "")
     if not url and not secret:
