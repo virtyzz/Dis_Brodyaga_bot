@@ -117,6 +117,7 @@ class MapOutboxTests(unittest.TestCase):
         with patch.object(map_realtime.urllib.request, "urlopen", side_effect=open_request):
             map_realtime.deliver_snapshot("https://map/internal", "secret", self.snapshot())
         request = captured[0]
+        self.assertTrue(request.get_header("User-agent").startswith("BrodyagaBot/"))
         stamp = request.get_header("X-brodyaga-timestamp")
         expected = hmac.new(b"secret", stamp.encode() + b"." + request.data, hashlib.sha256).hexdigest()
         self.assertEqual(request.get_header("X-brodyaga-signature"), expected)

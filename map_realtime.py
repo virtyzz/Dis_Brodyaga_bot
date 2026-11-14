@@ -23,6 +23,7 @@ def deliver_snapshot(url, secret, snapshot):
     request = urllib.request.Request(url, data=body, method="POST", headers={
         "Content-Type": "application/json", "X-Brodyaga-Timestamp": stamp,
         "X-Brodyaga-Signature": signature,
+        "User-Agent": "BrodyagaBot/1.0 (+https://github.com/virtyzz/Dis_Brodyaga_bot)",
     })
     with urllib.request.urlopen(request, timeout=5) as response:
         result = json.load(response)
