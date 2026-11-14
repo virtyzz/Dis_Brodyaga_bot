@@ -6,10 +6,12 @@ from datetime import datetime
 
 import discord
 from activity_logging import bind_discord, emit, discord_context
+from discord_diagnostics import mark_ack_error, trace_acknowledgement
 
 logger = logging.getLogger(__name__)
 
 
+@trace_acknowledgement
 async def acknowledge(interaction, *, ephemeral=False, thinking=False) -> bool:
     bind_discord(interaction)
     if interaction.response.is_done():
@@ -18,6 +20,7 @@ async def acknowledge(interaction, *, ephemeral=False, thinking=False) -> bool:
     try:
         await interaction.response.defer(ephemeral=ephemeral, thinking=thinking)
     except discord.HTTPException as error:
+        mark_ack_error(error)
         if error.code not in (10062, 40060):
             raise
         emit("interaction_rejected", details=discord_context(interaction), error_code=error.code)
@@ -34,7 +37,8 @@ async def acknowledge(interaction, *, ephemeral=False, thinking=False) -> bool:
             getattr(getattr(interaction, "client", None), "latency", None),
         )
         return False
-    except discord.InteractionResponded:
+    except discord.InteractionResponded as error:
+        mark_ack_error(error)
         # Another handler won a simultaneous initial response. Do not replay
         # an action whose result may already be in progress elsewhere.
         logger.warning("Concurrent interaction response; duplicate action cancelled")

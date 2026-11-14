@@ -23,14 +23,17 @@ if not logger.handlers:
     logger.addHandler(handler)
 
 
-def configure_activity_file(service):
+def configure_activity_file(service, *, target_logger=None, category="activity"):
     """One writer per file; retain daily archives across container replacement."""
     if service not in {"bot", "api"}:
         raise ValueError("Unknown logging service")
+    if category not in {"activity", "technical"}:
+        raise ValueError("Unknown logging category")
+    target_logger = logger if target_logger is None else target_logger
     directory = Path(os.getenv("BRODYAGA_LOG_DIR", str(Path(__file__).resolve().parent / "logs")))
     directory.mkdir(parents=True, exist_ok=True)
-    path = (directory / f"{service}-activity.jsonl").resolve()
-    for handler in logger.handlers:
+    path = (directory / f"{service}-{category}.jsonl").resolve()
+    for handler in target_logger.handlers:
         if isinstance(handler, TimedRotatingFileHandler) and handler.baseFilename == str(path):
             return handler
     handler = TimedRotatingFileHandler(
@@ -38,7 +41,7 @@ def configure_activity_file(service):
         encoding="utf-8", utc=True,
     )
     handler.setFormatter(logging.Formatter("%(message)s"))
-    logger.addHandler(handler)
+    target_logger.addHandler(handler)
     return handler
 
 

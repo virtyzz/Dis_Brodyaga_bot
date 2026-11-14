@@ -11,6 +11,7 @@ import pytz
 from subscriptions import SubscriptionView, send_pending_notifications, register_notification_views
 from interaction_utils import acknowledge
 from activity_logging import bind_discord, component_metadata, configure_activity_file, context as activity_context, discord_context, emit
+from discord_diagnostics import configure_file as configure_technical_file, create_http_trace, watch_event_loop
 from datetime import datetime, time as dt_time
 
 from database import (
@@ -70,6 +71,20 @@ logger = logging.getLogger(__name__)
 
 
 class BrodyagaBot(commands.Bot):
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("http_trace", create_http_trace())
+        super().__init__(*args, **kwargs)
+        self._diagnostic_task = None
+
+    async def close(self):
+        if self._diagnostic_task is not None:
+            self._diagnostic_task.cancel()
+            try:
+                await self._diagnostic_task
+            except asyncio.CancelledError:
+                pass
+        await super().close()
+
     async def invoke(self, ctx):
         if ctx.prefix is None:
             return await super().invoke(ctx)
@@ -88,6 +103,8 @@ class BrodyagaBot(commands.Bot):
         self.add_view(MainMenuV2View())
         register_notification_views(self)
         logger.info("Database and persistent menu initialized")
+        if self._diagnostic_task is None or self._diagnostic_task.done():
+            self._diagnostic_task = asyncio.create_task(watch_event_loop(), name="discord-loop-diagnostics")
 
 
 bot = BrodyagaBot(command_prefix="!", intents=intents)
@@ -1877,4 +1894,5 @@ async def menu_command(interaction: discord.Interaction):
 
 if __name__ == "__main__":
     configure_activity_file("bot")
+    configure_technical_file()
     bot.run(TOKEN)
