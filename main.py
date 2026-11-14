@@ -217,10 +217,36 @@ async def on_message(message):
     await bot.process_commands(message)
 
 
+def log_guild_inventory(client):
+    """Print current installations without extra API requests or member scans."""
+    print(f"Discord-серверов с ботом: {len(client.guilds)}", flush=True)
+    for guild in sorted(client.guilds, key=lambda item: item.id):
+        owner = f"{guild.owner} (ID: {guild.owner_id})" if guild.owner else f"ID: {guild.owner_id} (ник не загружен)"
+        member_count = guild.member_count if guild.member_count is not None else "неизвестно"
+        me = guild.me
+        joined_at = (
+            me.joined_at.astimezone(MSK).strftime("%d.%m.%Y %H:%M:%S МСК")
+            if me and me.joined_at else "неизвестно"
+        )
+        permissions = (
+            ", ".join(name for name, enabled in me.guild_permissions if enabled) or "нет"
+        ) if me else "неизвестно"
+        print(
+            f"Сервер: {guild.name!r} | ID: {guild.id}\n"
+            f"  Владелец: {owner!r}\n"
+            f"  Участников (включая ботов): {member_count}\n"
+            f"  Бот присоединился: {joined_at}\n"
+            f"  Права бота на сервере: {permissions}\n"
+            f"  Сервер временно недоступен: {'да' if guild.unavailable else 'нет'}",
+            flush=True,
+        )
+
+
 @bot.event
 async def on_ready():
     """Событие при запуске бота"""
     print(f"Бот запущен: {bot.user.name} (ID: {bot.user.id})")
+    log_guild_inventory(bot)
 
     # Запуск задачи архивирования (04:00 MSK = 01:00 UTC)
     if not archive_daily.is_running():
