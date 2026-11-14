@@ -1,6 +1,8 @@
 import sqlite3
 import os
 import math
+import json
+import time
 from activity_logging import audit_write
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -39,6 +41,30 @@ def _archive(cursor, now):
     for table in ("trader_reports", "location_checks", "trader_notification_events",
                   "trader_notifications", "report_cooldowns"):
         cursor.execute(f"DELETE FROM {table}")
+    _queue_map_snapshot(cursor, now)
+
+
+def _queue_map_snapshot(cursor, now=None):
+    """A coalescing outbox: public state and revision commit with the vote."""
+    reports = [dict(zip(("server", "location_name", "x", "y", "confirmations"), row))
+               for row in cursor.execute("""
+        SELECT server, location_name, x_coord, y_coord, COUNT(*) FROM trader_reports
+        GROUP BY server, location_name, x_coord, y_coord ORDER BY server, location_name
+    """)]
+    payload = json.dumps({"reports": reports, "expires_at":
+        (_cycle_start(now) + timedelta(days=1)).timestamp()}, ensure_ascii=False, separators=(",", ":"))
+    cursor.execute("""
+        INSERT INTO map_reports_outbox (id, epoch, revision, payload) VALUES (1, ?, 1, ?)
+        ON CONFLICT(id) DO UPDATE SET revision = revision + 1, payload = excluded.payload
+        WHERE payload != excluded.payload
+    """, (str(time.time_ns() // 1000), payload))
+
+
+def read_map_snapshot(conn):
+    row = conn.execute("SELECT epoch, revision, payload FROM map_reports_outbox WHERE id = 1").fetchone()
+    if row is None:
+        return None
+    return {"type": "brodyaga.reports", "epoch": row[0], "revision": row[1], **json.loads(row[2])}
 
 
 def _ensure_cycle(cursor, now=None):
@@ -199,12 +225,19 @@ def init_database():
                 cursor.execute(f"ALTER TABLE trader_notifications ADD COLUMN {name} {definition}")
         cursor.execute("CREATE TABLE IF NOT EXISTS bot_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         cursor.execute("""
+            CREATE TABLE IF NOT EXISTS map_reports_outbox (
+                id INTEGER PRIMARY KEY CHECK (id = 1), epoch TEXT NOT NULL,
+                revision INTEGER NOT NULL, payload TEXT NOT NULL
+            )
+        """)
+        cursor.execute("""
             CREATE TABLE IF NOT EXISTS report_cooldowns (
                 reporter_id BIGINT NOT NULL, server TEXT NOT NULL,
                 last_changed_at REAL NOT NULL, PRIMARY KEY (reporter_id, server)
             )
         """)
         _ensure_cycle(cursor)
+        _queue_map_snapshot(cursor)
         cycle = _cycle_start()
         cursor.execute("""
             UPDATE trader_notifications SET cycle_start = ?, expires_at = ?
@@ -369,6 +402,7 @@ def add_trader_report(
                 (now.replace(tzinfo=None), x_coord, y_coord, server, reporter_id),
             )
             cursor.execute("DELETE FROM location_checks WHERE server = ? AND location_name = ?", (server, location_name))
+            _queue_map_snapshot(cursor, now)
             return False
 
         previous = cursor.execute(
@@ -413,6 +447,7 @@ def add_trader_report(
                 SELECT user_id, server, ?, ?, ?, ?, ?, ?, ? FROM server_subscriptions WHERE server = ?
             """, (location_name, x_coord, y_coord, cycle.isoformat(),
                   (cycle + timedelta(days=1)).timestamp(), reporter_id, reporter_name, server))
+        _queue_map_snapshot(cursor, now)
         return is_first
 
 

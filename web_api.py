@@ -286,7 +286,13 @@ class ApiHandler(BaseHTTPRequestHandler):
 def main() -> None:
     configure_activity_file("api")
     init_database()
-    ThreadingHTTPServer(("0.0.0.0", 8099), ApiHandler).serve_forever()
+    from map_realtime import start_map_publisher
+    publisher = start_map_publisher()
+    try:
+        ThreadingHTTPServer(("0.0.0.0", 8099), ApiHandler).serve_forever()
+    finally:
+        if publisher:
+            publisher.stop()
 
 
 if __name__ == "__main__":
