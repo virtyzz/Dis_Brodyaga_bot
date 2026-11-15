@@ -9,7 +9,7 @@ import unittest
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import database as db
 import map_realtime
@@ -121,6 +121,50 @@ class MapOutboxTests(unittest.TestCase):
         stamp = request.get_header("X-brodyaga-timestamp")
         expected = hmac.new(b"secret", stamp.encode() + b"." + request.data, hashlib.sha256).hexdigest()
         self.assertEqual(request.get_header("X-brodyaga-signature"), expected)
+
+    def test_idle_time_and_unrelated_commit_do_not_resend_snapshot(self):
+        first = self.snapshot()
+        changed = {**first, "revision": first["revision"] + 1}
+        conn = Mock()
+        conn.execute.return_value.fetchone.side_effect = [(1,), (1,), (2,), (3,)]
+        publisher = map_realtime.MapPublisher("https://map/internal", "x" * 32)
+        publisher.stop_event = Mock()
+        publisher.stop_event.is_set.side_effect = [False] * 4 + [True]
+        clock = [0]
+        publisher.stop_event.wait.side_effect = lambda _: clock.__setitem__(0, clock[0] + 120)
+        # Advance far beyond the old 30s resend interval, with an unrelated
+        # commit followed by a real outbox change.
+        with patch.object(map_realtime.sqlite3, "connect", return_value=conn), \
+             patch.object(db, "ensure_current_cycle"), \
+             patch.object(db, "read_map_snapshot", side_effect=[first, first, changed]), \
+             patch.object(map_realtime.time, "monotonic", side_effect=lambda: clock[0]), \
+             patch.object(map_realtime, "deliver_snapshot") as send:
+            publisher.run()
+        self.assertEqual([call.args[2] for call in send.call_args_list], [first, changed])
+
+    def test_daily_reset_is_sent_without_user_commits(self):
+        db.add_trader_report(self.server, self.location, 1, 2, 1)
+        publisher = map_realtime.MapPublisher("https://map/internal", "x" * 32)
+        sent = []
+        ensure = db.ensure_current_cycle
+        now = datetime.now(timezone.utc)
+        cycles = iter([now, now + timedelta(days=1)])
+
+        def ensure_cycle():
+            ensure(next(cycles))
+
+        def send(url, secret, data):
+            sent.append(data)
+            if len(sent) == 2:
+                publisher.stop_event.set()
+
+        with patch.object(map_realtime, "deliver_snapshot", side_effect=send), \
+             patch.object(map_realtime.database, "ensure_current_cycle", side_effect=ensure_cycle), \
+             patch.object(map_realtime.time, "time", side_effect=[now.timestamp(), now.timestamp() + 86400]):
+            publisher.run()
+        self.assertEqual(len(sent), 2)
+        self.assertTrue(sent[0]["reports"])
+        self.assertEqual(sent[1]["reports"], [])
 
     def test_multiple_targets_have_independent_publishers(self):
         targets = [{"url": "https://prod/internal", "secret": "p" * 32},

@@ -16,6 +16,9 @@ import uuid
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import closing
+import database
+from map_realtime import configured_targets, RECOVERY_CONTEXT
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -109,8 +112,41 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.finish_oauth()
         elif path == "/reports":
             self.send_reports()
+        elif path == "/internal/map-snapshot":
+            self.send_map_snapshot()
         else:
             self.send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
+
+    def send_map_snapshot(self) -> None:
+        stamp = self.headers.get("X-Brodyaga-Timestamp", "")
+        signature = self.headers.get("X-Brodyaga-Signature", "")
+        try:
+            valid_stamp = abs(time.time() - int(stamp)) <= 60
+        except (ValueError, OverflowError):
+            valid_stamp = False
+        try:
+            targets = configured_targets()
+        except ValueError:
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Publisher is not configured"})
+            return
+        if (not valid_stamp or len(signature) != 64
+                or any(c not in "0123456789abcdef" for c in signature) or not any(hmac.compare_digest(
+            hmac.new(secret.encode(), RECOVERY_CONTEXT + stamp.encode(), hashlib.sha256).hexdigest(),
+            signature,
+        ) for _, secret in targets)):
+            self.send_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "Invalid recovery signature"})
+            return
+        try:
+            database.ensure_current_cycle()
+            with closing(sqlite3.connect(database.DB_PATH, timeout=10)) as conn:
+                snapshot = database.read_map_snapshot(conn)
+            if snapshot is None:
+                raise ValueError("Snapshot is not initialized")
+        except (sqlite3.Error, ValueError):
+            LOGGER.exception("Cannot read map recovery snapshot")
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Snapshot temporarily unavailable"})
+            return
+        self.send_json(HTTPStatus.OK, snapshot)
 
     def do_POST(self) -> None:
         self.begin_activity()
