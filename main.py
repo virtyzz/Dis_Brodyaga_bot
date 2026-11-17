@@ -16,6 +16,8 @@ from datetime import datetime, time as dt_time
 
 from database import (
     init_database,
+    get_trader_comments,
+    add_trader_comment,
     ensure_current_cycle,
     ReportCooldownError,
     register_user,
@@ -858,6 +860,115 @@ class TraderReportConfirmationView(discord.ui.LayoutView):
         )
 
 
+class TraderCommentModal(discord.ui.Modal):
+    def __init__(self, view):
+        super().__init__(title="Где именно находится торговец?", timeout=3600)
+        self.source_view = view
+        self.body = discord.ui.TextInput(
+            label="Описание или точные координаты", style=discord.TextStyle.paragraph,
+            placeholder="Например: второй этаж, комната справа от лестницы…",
+            max_length=600, required=True,
+        )
+        self.add_item(self.body)
+
+    @database_action
+    async def on_submit(self, interaction):
+        view = self.source_view
+        if interaction.user.id != view.user_id:
+            await interaction.response.send_message("Это не ваша форма.", ephemeral=True)
+            return
+        if not await acknowledge(interaction, ephemeral=True, thinking=True):
+            return
+        body = self.body.value.strip()
+        if not body:
+            await interaction.followup.send("Введите описание или координаты.", ephemeral=True)
+            return
+        saved = await asyncio.to_thread(
+            add_trader_comment, view.server, view.location_name,
+            interaction.user.id, body, view.cycle,
+        )
+        if not saved:
+            await interaction.followup.send(
+                "Находка устарела или наступил новый игровой день. Откройте «Где торговец» заново.",
+                ephemeral=True,
+            )
+            return
+        updated = await TraderCommentsView.create(view.user_id, view.server, view.location_name)
+        await interaction.edit_original_response(view=updated, allowed_mentions=discord.AllowedMentions.none())
+
+
+class TraderCommentsView(discord.ui.LayoutView):
+    PAGE_SIZE = 3
+
+    def __init__(self, user_id, server, location_name, cycle, comments, page=0):
+        super().__init__(timeout=3600)
+        self.user_id, self.server, self.location_name = user_id, server, location_name
+        self.cycle = cycle
+        pages = max(1, (len(comments) + self.PAGE_SIZE - 1) // self.PAGE_SIZE)
+        self.page = max(0, min(page, pages - 1))
+        heading = f"# 💬 Комментарии\n{get_server_display_name(server)} · {location_name}\nСтраница {self.page + 1}/{pages}"
+        container = discord.ui.Container(discord.ui.TextDisplay(heading))
+        visible = comments[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
+        if not visible:
+            container.add_item(discord.ui.TextDisplay("Комментариев пока нет. Уточните, где именно стоит торговец."))
+        for author, body, stamp in visible:
+            safe = discord.utils.escape_mentions(discord.utils.escape_markdown(body))
+            container.add_item(discord.ui.TextDisplay(f"<@{author}> · <t:{stamp}:f>\n{safe}"))
+        write = discord.ui.Button(label="Написать", style=discord.ButtonStyle.primary)
+        write.callback = self.write
+        buttons = [write]
+        if self.page:
+            buttons.append(self.navigation("Назад", self.page - 1))
+        buttons.append(self.navigation("Обновить", self.page))
+        if self.page + 1 < pages:
+            buttons.append(self.navigation("Вперёд", self.page + 1))
+        container.add_item(discord.ui.ActionRow(*buttons))
+        self.add_item(container)
+
+    @classmethod
+    async def create(cls, user_id, server, location_name, page=0):
+        cycle, comments = await asyncio.to_thread(get_trader_comments, server, location_name)
+        return cls(user_id, server, location_name, cycle, comments, page)
+
+    async def interaction_check(self, interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return False
+        return True
+
+    async def write(self, interaction):
+        await interaction.response.send_modal(TraderCommentModal(self))
+
+    def navigation(self, label, page):
+        button = discord.ui.Button(label=label, style=discord.ButtonStyle.secondary)
+
+        @database_action
+        async def callback(interaction):
+            if not await acknowledge(interaction, ephemeral=True):
+                return
+            view = await self.create(self.user_id, self.server, self.location_name, page)
+            await interaction.edit_original_response(view=view, allowed_mentions=discord.AllowedMentions.none())
+
+        button.callback = callback
+        return button
+
+
+class TraderCommentsButton(discord.ui.Button):
+    def __init__(self, user_id, server, location_name):
+        super().__init__(emoji="💬", style=discord.ButtonStyle.secondary)
+        self.user_id, self.server, self.location_name = user_id, server, location_name
+
+    @database_action
+    async def callback(self, interaction):
+        if interaction.user.id != self.user_id:
+            await interaction.response.send_message("Это не ваше меню.", ephemeral=True)
+            return
+        if not await acknowledge(interaction, ephemeral=True, thinking=True):
+            return
+        view = await TraderCommentsView.create(self.user_id, self.server, self.location_name)
+        await interaction.edit_original_response(view=view, allowed_mentions=discord.AllowedMentions.none())
+
+
 class TraderLocationsV2View(discord.ui.LayoutView):
     """Show every server immediately, with direct actions for each report."""
 
@@ -894,9 +1005,10 @@ class TraderLocationsV2View(discord.ui.LayoutView):
         self.page = max(0, min(self.page, pages - 1))
         visible_cards = cards[self.page * self.PAGE_SIZE:(self.page + 1) * self.PAGE_SIZE]
 
-        container = discord.ui.Container(discord.ui.TextDisplay("# 🕵️ Где торговец?"))
+        heading = "# 🕵️ Где торговец?"
         if self.notice:
-            container.add_item(discord.ui.TextDisplay(f"> {self.notice}"))
+            heading += f"\n> {self.notice}"
+        container = discord.ui.Container(discord.ui.TextDisplay(heading))
 
         for index, (card_type, server, location_name, data) in enumerate(visible_cards):
             server_name = get_server_display_name(server)
@@ -933,6 +1045,7 @@ class TraderLocationsV2View(discord.ui.LayoutView):
                         self.user_id, server, location_name, self.page
                     )
                 )
+                actions.append(TraderCommentsButton(self.user_id, server, location_name))
                 container.add_item(discord.ui.ActionRow(*actions))
 
             if index < len(visible_cards) - 1:
@@ -1489,9 +1602,9 @@ class LocationStatusActionButton(discord.ui.Button):
     ):
         labels = {"check": "Не найден", "cancel": "Отменить", "found": "Подтвердить"}
         styles = {
-            "check": discord.ButtonStyle.success,
+            "check": discord.ButtonStyle.primary,
             "cancel": discord.ButtonStyle.danger,
-            "found": discord.ButtonStyle.primary,
+            "found": discord.ButtonStyle.success,
         }
         super().__init__(label=label or labels[action], style=styles[action], disabled=disabled)
         self.user_id = user_id

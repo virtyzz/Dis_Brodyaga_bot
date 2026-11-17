@@ -39,7 +39,7 @@ def _archive(cursor, now):
                is_first_reporter, ? FROM trader_reports
     """, (_utc_now(now).replace(tzinfo=None),))
     for table in ("trader_reports", "location_checks", "trader_notification_events",
-                  "trader_notifications", "report_cooldowns"):
+                  "trader_notifications", "report_cooldowns", "trader_comments"):
         cursor.execute(f"DELETE FROM {table}")
     _queue_map_snapshot(cursor, now)
 
@@ -236,6 +236,15 @@ def init_database():
                 last_changed_at REAL NOT NULL, PRIMARY KEY (reporter_id, server)
             )
         """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS trader_comments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                server TEXT NOT NULL, location_name TEXT NOT NULL,
+                author_id BIGINT NOT NULL, body TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            )
+        """)
+        cursor.execute("CREATE INDEX IF NOT EXISTS comments_location ON trader_comments(server, location_name, id)")
         _ensure_cycle(cursor)
         _queue_map_snapshot(cursor)
         cycle = _cycle_start()
@@ -637,3 +646,36 @@ def get_history_by_date(date_str: str):
     results = cursor.fetchall()
     conn.close()
     return results
+
+
+def get_trader_comments(server, location_name):
+    """Return today's comments and a cycle token for stale-form protection."""
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _ensure_cycle(conn.cursor())
+        cycle = conn.execute("SELECT value FROM bot_state WHERE key = 'cycle_start'").fetchone()[0]
+        rows = conn.execute(
+            "SELECT author_id, body, created_at FROM trader_comments WHERE server = ? AND location_name = ? ORDER BY id DESC",
+            (server, location_name),
+        ).fetchall()
+        return cycle, rows
+
+
+def add_trader_comment(server, location_name, author_id, body, cycle):
+    body = body.strip()
+    if not body or len(body) > 600:
+        raise ValueError("Комментарий должен содержать от 1 до 600 символов.")
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:
+        conn.execute("BEGIN IMMEDIATE")
+        _ensure_cycle(conn.cursor())
+        current = conn.execute("SELECT value FROM bot_state WHERE key = 'cycle_start'").fetchone()[0]
+        if cycle != current or not conn.execute(
+            "SELECT 1 FROM trader_reports WHERE server = ? AND location_name = ? LIMIT 1",
+            (server, location_name),
+        ).fetchone():
+            return False
+        conn.execute(
+            "INSERT INTO trader_comments (server, location_name, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)",
+            (server, location_name, author_id, body, int(time.time())),
+        )
+        return True
