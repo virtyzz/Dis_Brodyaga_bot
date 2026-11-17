@@ -39,7 +39,7 @@ def server_list(servers) -> str:
 class SubscriptionView(discord.ui.LayoutView):
     def __init__(self, user_id: int, selected=None, notice: str | None = None,
                  retry: bool = False, *, current=()):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         # Construct only from a snapshot; create() loads SQLite off the event
         # loop before constructing Discord UI components on the event loop.

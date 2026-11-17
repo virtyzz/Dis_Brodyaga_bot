@@ -113,8 +113,8 @@ bot = BrodyagaBot(command_prefix="!", intents=intents)
 # user_id -> {"step": int, "server": str, "location_base": str, "timestamp": float}
 user_states = {}
 
-# Таймаут состояния (5 минут в секундах)
-USER_STATE_TIMEOUT = 300
+# Таймаут состояния (1 час в секундах)
+USER_STATE_TIMEOUT = 3600
 REPORT_CODE_PREFIX = "73"
 
 # Московский часовой пояс
@@ -483,7 +483,7 @@ class HelpInfoV2View(discord.ui.LayoutView):
     """Compact Components V2 help screen shown from the main menu."""
 
     def __init__(self):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
 
         container = discord.ui.Container(
             discord.ui.TextDisplay("# ℹ️ Как это работает"),
@@ -594,7 +594,7 @@ async def show_trader_locations_detail(
                 )
 
             # Кнопки для скриншотов и ссылка на карту
-            view = discord.ui.View(timeout=120)
+            view = discord.ui.View(timeout=3600)
             for loc_name in locations.keys():
                 screenshot = get_screenshot_path(loc_name)
                 if screenshot and os.path.exists(screenshot):
@@ -733,7 +733,7 @@ class TraderLocationMapSelect(discord.ui.Select):
                 f"Не удалось подготовить ссылку на карту: {location_name}.", ephemeral=True
             )
             return
-        view = discord.ui.View(timeout=300)
+        view = discord.ui.View(timeout=3600)
         view.add_item(
             discord.ui.Button(
                 label="Открыть на карте", style=discord.ButtonStyle.link, url=map_url
@@ -792,7 +792,7 @@ class TraderReportConfirmationView(discord.ui.LayoutView):
     """Confirmation before a report is added from the public status screen."""
 
     def __init__(self, user_id: int, server: str, location_name: str, return_page: int = 0):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         self.server = server
         self.location_name = location_name
@@ -864,7 +864,7 @@ class TraderLocationsV2View(discord.ui.LayoutView):
     PAGE_SIZE = 5
 
     def __init__(self, user_id: int, page: int = 0, notice: str | None = None, *, reports=None):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         self.page = page
         self.notice = notice
@@ -1014,7 +1014,7 @@ class ServerSelectView(discord.ui.View):
     """Выбор сервера"""
 
     def __init__(self, user_id: int):
-        super().__init__(timeout=300)  # 5 минут таймаут
+        super().__init__(timeout=3600)  # 1 час таймаут
         self.user_id = user_id
 
     @discord.ui.select(
@@ -1147,7 +1147,7 @@ class WithdrawCheckView(discord.ui.View):
     """Lets a player undo only their own fresh check."""
 
     def __init__(self, user_id: int, server: str, location_name: str):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         self.server = server
         self.location_name = location_name
@@ -1211,7 +1211,7 @@ def make_location_select_view(user_id: int, server: str, locations: list):
 
     class LocationSelectViewDynamic(discord.ui.View):
         def __init__(self):
-            super().__init__(timeout=300)
+            super().__init__(timeout=3600)
             options = [
                 discord.SelectOption(label=loc, value=loc)
                 for loc in locations
@@ -1278,7 +1278,7 @@ class BuildingSelectView(discord.ui.View):
     """Выбор конкретного здания с превью скриншота"""
 
     def __init__(self, user_id: int, server: str, locations: list, flow: str = "report"):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         self.server = server
         self.locations = locations
@@ -1548,7 +1548,7 @@ class TraderConfirmationView(discord.ui.LayoutView):
     def __init__(
         self, user_id: int, server: str, location_name: str, return_page: int
     ):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         self.server = server
         self.location_name = location_name
@@ -1626,7 +1626,7 @@ class LocationStatusV2View(discord.ui.LayoutView):
     PAGE_SIZE = 5
 
     def __init__(self, user_id: int, server: str, page: int = 0, notice: str | None = None, *, snapshot=None):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         self.server = server
         self.page = page
@@ -1765,7 +1765,7 @@ class SearchServerSelectV2View(discord.ui.LayoutView):
     """Components V2 entry screen for choosing a server before a search."""
 
     def __init__(self, user_id: int, show_progress: bool = False, *, snapshot=None):
-        super().__init__(timeout=300)
+        super().__init__(timeout=3600)
         self.user_id = user_id
         self.show_progress = show_progress
         self.snapshot = snapshot or ({server: (None, None) for server in SERVERS}, [], {server: [] for server in SERVERS})
