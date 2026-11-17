@@ -648,6 +648,14 @@ def get_history_by_date(date_str: str):
     return results
 
 
+def get_trader_comment_counts():
+    ensure_current_cycle()
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn:
+        return {(server, location): count for server, location, count in conn.execute(
+            "SELECT server, location_name, COUNT(*) FROM trader_comments GROUP BY server, location_name"
+        )}
+
+
 def get_trader_comments(server, location_name):
     """Return today's comments and a cycle token for stale-form protection."""
     with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn, conn:

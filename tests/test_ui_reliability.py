@@ -69,7 +69,8 @@ class UIReliabilityTests(unittest.IsolatedAsyncioTestCase):
                 raise AssertionError("event loop did not release blocked DB read")
             return {server: {} for server in SERVERS}
 
-        with patch.object(main, "get_grouped_trader_reports", side_effect=blocked_read):
+        with patch.object(main, "get_grouped_trader_reports", side_effect=blocked_read), \
+             patch.object(main, "get_trader_comment_counts", return_value={}):
             task = asyncio.create_task(main.TraderLocationsV2View.create(1))
             try:
                 for _ in range(100):

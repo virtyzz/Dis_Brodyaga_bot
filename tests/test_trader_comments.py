@@ -48,7 +48,7 @@ class CommentTests(unittest.IsolatedAsyncioTestCase):
                 db.add_trader_comment(self.server, self.location, 10, text, cycle)
         self.assertFalse(db.add_trader_comment(self.server, "missing", 10, "test", cycle))
 
-    async def test_worst_case_report_page_fits_and_has_emoji_only_buttons(self):
+    async def test_worst_case_report_page_fits_and_has_comment_counts(self):
         reports = {server: {} for server in SERVERS}
         for location in get_all_locations()[:15]:
             reports[self.server][location] = {"x": 1, "y": 2, "users": ["player"]}
@@ -56,7 +56,18 @@ class CommentTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(view.total_children_count, 40)
         buttons = [item for item in view.walk_children() if isinstance(item, main.TraderCommentsButton)]
         self.assertEqual(len(buttons), 5)
-        self.assertTrue(all(not button.label and str(button.emoji) == "💬" for button in buttons))
+        self.assertTrue(all(button.label == "(0)" and str(button.emoji) == "💬" for button in buttons))
+
+    async def test_comment_count_button_uses_saved_comments(self):
+        db.register_user(9, "player")
+        cycle, _ = db.get_trader_comments(self.server, self.location)
+        for author in (10, 11):
+            db.add_trader_comment(self.server, self.location, author, "Внутри", cycle)
+        view = await main.TraderLocationsV2View.create(1)
+        button = next(item for item in view.walk_children() if isinstance(item, main.TraderCommentsButton))
+        self.assertEqual(button.label, "(2)")
+        db.ensure_current_cycle(datetime.now(timezone.utc) + timedelta(days=1))
+        self.assertEqual(db.get_trader_comment_counts(), {})
 
     async def test_comments_pagination_fits_with_maximum_escaped_text(self):
         comments = [(10, "*_" * 300, 123) for _ in range(8)]

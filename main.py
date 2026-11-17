@@ -17,6 +17,7 @@ from datetime import datetime, time as dt_time
 from database import (
     init_database,
     get_trader_comments,
+    get_trader_comment_counts,
     add_trader_comment,
     ensure_current_cycle,
     ReportCooldownError,
@@ -954,8 +955,8 @@ class TraderCommentsView(discord.ui.LayoutView):
 
 
 class TraderCommentsButton(discord.ui.Button):
-    def __init__(self, user_id, server, location_name):
-        super().__init__(emoji="💬", style=discord.ButtonStyle.secondary)
+    def __init__(self, user_id, server, location_name, count=0):
+        super().__init__(emoji="💬", label=f"({count})", style=discord.ButtonStyle.secondary)
         self.user_id, self.server, self.location_name = user_id, server, location_name
 
     @database_action
@@ -974,18 +975,20 @@ class TraderLocationsV2View(discord.ui.LayoutView):
 
     PAGE_SIZE = 5
 
-    def __init__(self, user_id: int, page: int = 0, notice: str | None = None, *, reports=None):
+    def __init__(self, user_id: int, page: int = 0, notice: str | None = None, *, reports=None, comment_counts=None):
         super().__init__(timeout=3600)
         self.user_id = user_id
         self.page = page
         self.notice = notice
         self.reports = reports if reports is not None else {server: {} for server in SERVERS}
+        self.comment_counts = comment_counts or {}
         self._build_layout()
 
     @classmethod
     async def create(cls, user_id, page=0, notice=None):
         reports = await asyncio.to_thread(get_grouped_trader_reports)
-        return cls(user_id, page, notice, reports=reports)
+        counts = await asyncio.to_thread(get_trader_comment_counts)
+        return cls(user_id, page, notice, reports=reports, comment_counts=counts)
 
     def _build_layout(self):
         reports = self.reports
@@ -1045,7 +1048,10 @@ class TraderLocationsV2View(discord.ui.LayoutView):
                         self.user_id, server, location_name, self.page
                     )
                 )
-                actions.append(TraderCommentsButton(self.user_id, server, location_name))
+                actions.append(TraderCommentsButton(
+                    self.user_id, server, location_name,
+                    self.comment_counts.get((server, location_name), 0),
+                ))
                 container.add_item(discord.ui.ActionRow(*actions))
 
             if index < len(visible_cards) - 1:
