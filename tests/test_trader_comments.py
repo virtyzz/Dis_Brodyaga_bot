@@ -102,3 +102,19 @@ class CommentTests(unittest.IsolatedAsyncioTestCase):
         event = SimpleNamespace(user=SimpleNamespace(id=2), response=SimpleNamespace(send_message=AsyncMock()))
         self.assertFalse(await view.interaction_check(event))
         event.response.send_message.assert_awaited_once()
+
+    async def test_confirmation_hidden_only_for_users_own_exact_report(self):
+        db.register_user(9, "same-name")
+        db.register_user(10, "same-name")
+        own = await main.TraderLocationsV2View.create(9)
+        other = await main.TraderLocationsV2View.create(10)
+        self.assertFalse(any(isinstance(item, main.TraderLocationConfirmButton) for item in own.walk_children()))
+        self.assertTrue(any(isinstance(item, main.TraderLocationConfirmButton) for item in other.walk_children()))
+        reports = {server: {} for server in SERVERS}
+        for server, location in ((self.server, self.location), (self.server, "other"), (SERVERS[1], self.location)):
+            reports[server][location] = {"x": 1, "y": 2, "users": ["player"]}
+        view = main.TraderLocationsV2View(9, reports=reports, confirmed_locations=db.get_user_trader_locations(9))
+        buttons = [item for item in view.walk_children() if isinstance(item, main.TraderLocationConfirmButton)]
+        self.assertEqual({(item.server, item.location_name) for item in buttons}, {(self.server, "other"), (SERVERS[1], self.location)})
+        db.ensure_current_cycle(datetime.now(timezone.utc) + timedelta(days=1))
+        self.assertEqual(db.get_user_trader_locations(9), set())

@@ -648,6 +648,15 @@ def get_history_by_date(date_str: str):
     return results
 
 
+def get_user_trader_locations(user_id):
+    ensure_current_cycle()
+    with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn:
+        return set(conn.execute(
+            "SELECT server, location_name FROM trader_reports WHERE reporter_id = ?",
+            (user_id,),
+        ).fetchall())
+
+
 def get_trader_comment_counts():
     ensure_current_cycle()
     with closing(sqlite3.connect(DB_PATH, timeout=10)) as conn:

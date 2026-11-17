@@ -70,7 +70,8 @@ class UIReliabilityTests(unittest.IsolatedAsyncioTestCase):
             return {server: {} for server in SERVERS}
 
         with patch.object(main, "get_grouped_trader_reports", side_effect=blocked_read), \
-             patch.object(main, "get_trader_comment_counts", return_value={}):
+             patch.object(main, "get_trader_comment_counts", return_value={}), \
+             patch.object(main, "get_user_trader_locations", return_value=set()):
             task = asyncio.create_task(main.TraderLocationsV2View.create(1))
             try:
                 for _ in range(100):

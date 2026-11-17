@@ -18,6 +18,7 @@ from database import (
     init_database,
     get_trader_comments,
     get_trader_comment_counts,
+    get_user_trader_locations,
     add_trader_comment,
     ensure_current_cycle,
     ReportCooldownError,
@@ -975,20 +976,22 @@ class TraderLocationsV2View(discord.ui.LayoutView):
 
     PAGE_SIZE = 5
 
-    def __init__(self, user_id: int, page: int = 0, notice: str | None = None, *, reports=None, comment_counts=None):
+    def __init__(self, user_id: int, page: int = 0, notice: str | None = None, *, reports=None, comment_counts=None, confirmed_locations=None):
         super().__init__(timeout=3600)
         self.user_id = user_id
         self.page = page
         self.notice = notice
         self.reports = reports if reports is not None else {server: {} for server in SERVERS}
         self.comment_counts = comment_counts or {}
+        self.confirmed_locations = confirmed_locations or set()
         self._build_layout()
 
     @classmethod
     async def create(cls, user_id, page=0, notice=None):
         reports = await asyncio.to_thread(get_grouped_trader_reports)
         counts = await asyncio.to_thread(get_trader_comment_counts)
-        return cls(user_id, page, notice, reports=reports, comment_counts=counts)
+        confirmed = await asyncio.to_thread(get_user_trader_locations, user_id)
+        return cls(user_id, page, notice, reports=reports, comment_counts=counts, confirmed_locations=confirmed)
 
     def _build_layout(self):
         reports = self.reports
@@ -1043,11 +1046,12 @@ class TraderLocationsV2View(discord.ui.LayoutView):
                             label="На карте", style=discord.ButtonStyle.link, url=map_url
                         )
                     )
-                actions.append(
-                    TraderLocationConfirmButton(
-                        self.user_id, server, location_name, self.page
+                if (server, location_name) not in self.confirmed_locations:
+                    actions.append(
+                        TraderLocationConfirmButton(
+                            self.user_id, server, location_name, self.page
+                        )
                     )
-                )
                 actions.append(TraderCommentsButton(
                     self.user_id, server, location_name,
                     self.comment_counts.get((server, location_name), 0),
