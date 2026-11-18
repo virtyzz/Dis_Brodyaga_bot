@@ -27,7 +27,7 @@ from activity_logging import configure_activity_file, context as activity_contex
 from coords_handler import SERVERS, get_all_locations, get_location_coords
 from database import (
     add_trader_report, get_trader_report_summary, init_database, register_user,
-    ReportCooldownError, get_location_check_summary, add_location_check,
+    ReportCooldownError, get_location_check_summary, add_location_check, remove_location_check,
 )
 
 
@@ -252,6 +252,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         try:
             payload = self.read_json()
             server, location_id = payload.get("server"), payload.get("location_id")
+            action = payload.get("action", "check")
+            if action not in ("check", "cancel"):
+                raise ValueError("Unknown action")
             locations = get_all_locations()
             if server not in SERVERS or type(location_id) is not int or not 1 <= location_id <= len(locations):
                 raise ValueError("Unknown server or location")
@@ -261,7 +264,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         location = locations[location_id - 1]
         try:
             register_user(int(session["user_id"]), session["username"])
-            saved = add_location_check(server, location, int(session["user_id"]))
+            if action == "cancel":
+                remove_location_check(server, location, int(session["user_id"]))
+                saved = True
+            else:
+                saved = add_location_check(server, location, int(session["user_id"]))
         except sqlite3.Error:
             LOGGER.exception("Cannot save location check")
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Не удалось сохранить отметку. Повторите запрос."})

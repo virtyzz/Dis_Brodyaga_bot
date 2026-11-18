@@ -71,6 +71,15 @@ class ApiReliabilityTests(unittest.TestCase):
                 if case in {"auth", "csrf", "point"}:
                     save.assert_not_called()
 
+    def test_cancel_check_only_removes_authenticated_players_check(self):
+        handler = self.handler()
+        handler.read_json.return_value = {"server": "cherno-3", "location_id": 1, "action": "cancel"}
+        with patch.object(web_api, "register_user"), patch.object(web_api, "remove_location_check", return_value=True) as remove, patch.object(web_api, "add_location_check") as add:
+            handler.create_check()
+        remove.assert_called_once_with("cherno-3", web_api.get_all_locations()[0], 7)
+        add.assert_not_called()
+        self.assertEqual(handler.send_json.call_args.args[0], HTTPStatus.OK)
+
     def test_shared_cooldown_returns_429(self):
         handler = self.handler()
         with patch.object(web_api, "register_user"), patch.object(
