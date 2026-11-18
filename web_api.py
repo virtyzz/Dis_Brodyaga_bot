@@ -27,7 +27,7 @@ from activity_logging import configure_activity_file, context as activity_contex
 from coords_handler import SERVERS, get_all_locations, get_location_coords
 from database import (
     add_trader_report, get_trader_report_summary, init_database, register_user,
-    ReportCooldownError, get_location_check_summary,
+    ReportCooldownError, get_location_check_summary, add_location_check,
 )
 
 
@@ -154,6 +154,8 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.begin_activity()
         if urllib.parse.urlparse(self.path).path == "/reports":
             self.create_report()
+        elif urllib.parse.urlparse(self.path).path == "/checks":
+            self.create_check()
         else:
             self.send_json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "Not found"})
 
@@ -238,6 +240,36 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Reports are temporarily unavailable"})
             return
         self.send_json(HTTPStatus.OK, {"ok": True, "reports": reports})
+
+    def create_check(self) -> None:
+        session = self.get_session()
+        if not session:
+            self.send_json(HTTPStatus.UNAUTHORIZED, {"ok": False, "error": "Discord authorization required"})
+            return
+        if self.headers.get("X-CSRF-Token") != session["csrf"]:
+            self.send_json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "Invalid CSRF token"})
+            return
+        try:
+            payload = self.read_json()
+            server, location_id = payload.get("server"), payload.get("location_id")
+            locations = get_all_locations()
+            if server not in SERVERS or type(location_id) is not int or not 1 <= location_id <= len(locations):
+                raise ValueError("Unknown server or location")
+        except (ValueError, TypeError, AttributeError):
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Unknown server or location"})
+            return
+        location = locations[location_id - 1]
+        try:
+            register_user(int(session["user_id"]), session["username"])
+            saved = add_location_check(server, location, int(session["user_id"]))
+        except sqlite3.Error:
+            LOGGER.exception("Cannot save location check")
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Не удалось сохранить отметку. Повторите запрос."})
+            return
+        if not saved:
+            self.send_json(HTTPStatus.CONFLICT, {"ok": False, "error": "В этой точке уже подтверждён торговец."})
+            return
+        self.send_json(HTTPStatus.OK, {"ok": True, "server": server, "location_name": location})
 
     def create_report(self) -> None:
         session = self.get_session()

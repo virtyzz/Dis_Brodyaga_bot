@@ -43,6 +43,34 @@ class ApiReliabilityTests(unittest.TestCase):
                 handler.send_checks()
         self.assertEqual(handler.send_json.call_args.args[0], HTTPStatus.SERVICE_UNAVAILABLE)
 
+    def test_create_check_uses_authenticated_actor_and_selected_server(self):
+        handler = self.handler()
+        handler.read_json.return_value = {"server": "cherno-4", "location_id": 1}
+        with patch.object(web_api, "register_user"), patch.object(web_api, "add_location_check", return_value=True) as save:
+            handler.create_check()
+        save.assert_called_once_with("cherno-4", web_api.get_all_locations()[0], 7)
+        self.assertEqual(handler.send_json.call_args.args[0], HTTPStatus.OK)
+
+    def test_create_check_rejects_missing_auth_csrf_invalid_point_and_found_conflict(self):
+        for case, expected in [("auth", 401), ("csrf", 403), ("point", 400), ("found", 409), ("database", 503)]:
+            with self.subTest(case=case):
+                handler = self.handler()
+                if case == "auth":
+                    handler.get_session.return_value = None
+                if case == "csrf":
+                    handler.headers = {}
+                if case == "point":
+                    handler.read_json.return_value = {"server": "cherno-1", "location_id": True}
+                with patch.object(web_api, "register_user"), patch.object(web_api, "add_location_check", return_value=False, side_effect=sqlite3.OperationalError("locked") if case == "database" else None) as save:
+                    if case == "database":
+                        with self.assertLogs(web_api.LOGGER, level="ERROR"):
+                            handler.create_check()
+                    else:
+                        handler.create_check()
+                self.assertEqual(handler.send_json.call_args.args[0], expected)
+                if case in {"auth", "csrf", "point"}:
+                    save.assert_not_called()
+
     def test_shared_cooldown_returns_429(self):
         handler = self.handler()
         with patch.object(web_api, "register_user"), patch.object(
