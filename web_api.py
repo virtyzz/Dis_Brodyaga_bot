@@ -27,7 +27,7 @@ from activity_logging import configure_activity_file, context as activity_contex
 from coords_handler import SERVERS, get_all_locations, get_location_coords
 from database import (
     add_trader_report, get_trader_report_summary, init_database, register_user,
-    ReportCooldownError,
+    ReportCooldownError, get_location_check_summary,
 )
 
 
@@ -110,6 +110,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self.start_oauth()
         elif path == "/auth/callback":
             self.finish_oauth()
+        elif path == "/checks":
+            self.send_checks()
         elif path == "/reports":
             self.send_reports()
         elif path == "/internal/map-snapshot":
@@ -211,6 +213,21 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Set-Cookie", f"{COOKIE_NAME}={cookie_value}; Path=/{domain_part}; HttpOnly; Secure; SameSite=Lax; Max-Age={SESSION_TTL}")
         self.send_header("Location", saved["return_to"])
         self.end_headers()
+
+    def send_checks(self) -> None:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        servers = query.get("server", [])
+        if len(servers) != 1 or servers[0] not in SERVERS:
+            self.send_json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": "Unknown server"})
+            return
+        server = servers[0]
+        try:
+            locations = sorted(row[0] for row in get_location_check_summary(server))
+        except sqlite3.Error:
+            LOGGER.exception("Cannot load location checks")
+            self.send_json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Checks are temporarily unavailable"})
+            return
+        self.send_json(HTTPStatus.OK, {"ok": True, "server": server, "locations": locations})
 
     def send_reports(self) -> None:
         self.get_session()  # Attach the actor when an authenticated map user reads reports.

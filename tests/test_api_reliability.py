@@ -17,6 +17,32 @@ class ApiReliabilityTests(unittest.TestCase):
         handler.send_json = Mock()
         return handler
 
+    def test_checks_are_scoped_to_selected_server_without_private_fields(self):
+        handler = self.handler()
+        handler.path = "/checks?server=cherno-3"
+        with patch.object(web_api, "get_location_check_summary", return_value=[("Test point", "2026-11-18", 2)]) as summary:
+            handler.send_checks()
+        summary.assert_called_once_with("cherno-3")
+        handler.send_json.assert_called_once_with(HTTPStatus.OK, {
+            "ok": True, "server": "cherno-3", "locations": ["Test point"]})
+
+    def test_checks_reject_missing_unknown_and_duplicate_servers(self):
+        for query in ["", "?server=unknown", "?server=cherno-1&server=cherno-2"]:
+            handler = self.handler()
+            handler.path = "/checks" + query
+            with patch.object(web_api, "get_location_check_summary") as summary:
+                handler.send_checks()
+            summary.assert_not_called()
+            self.assertEqual(handler.send_json.call_args.args[0], HTTPStatus.BAD_REQUEST)
+
+    def test_checks_database_error_is_not_an_empty_success(self):
+        handler = self.handler()
+        handler.path = "/checks?server=cherno-1"
+        with patch.object(web_api, "get_location_check_summary", side_effect=sqlite3.OperationalError("locked")):
+            with self.assertLogs(web_api.LOGGER, level="ERROR"):
+                handler.send_checks()
+        self.assertEqual(handler.send_json.call_args.args[0], HTTPStatus.SERVICE_UNAVAILABLE)
+
     def test_shared_cooldown_returns_429(self):
         handler = self.handler()
         with patch.object(web_api, "register_user"), patch.object(
